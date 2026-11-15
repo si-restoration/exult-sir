@@ -607,7 +607,11 @@ namespace {
  */
 
 void Container_list_gump::paint_skin(Gump_skin& skin) {
-	const TileRect panel(x, y, total_w(layout), layout.bg_height);
+	// The panel covers the art's opaque pixels, not the transparent margin
+	// and roller ends, so its frame stays on screen.
+	const TileRect art = Gump_skin::art_bounds(background);
+	const Panel_box pb = panel_box(layout, art.x, art.y, art.w, art.h);
+	const TileRect panel(x + pb.x, y + pb.y, pb.w, pb.h);
 	const TileRect none(0, 0, 0, 0);
 	if (!skin.base_valid(panel, none, none)) {
 		skin.panel(panel, none);

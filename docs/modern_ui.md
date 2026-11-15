@@ -194,7 +194,7 @@ When a themed menu style (Ultima, Modern or a theme file) is chosen, the data-dr
 
 ### What Is Themed
 - **Dynamic container gumps** (`Dynamic_container_gump`) with dynamic widgets: their panel, `Dynamic_text_widget`s, `Dynamic_button` plates, `Dynamic_slider`s (sliders and spinners), `Dynamic_list_widget`s and the close checkmark. The shop kit ([shop_kit.md](shop_kit.md)) is such a gump, so its buy and sell screens follow the theme.
-- **The container list view** (`Container_list_gump`, Containers: List; see [dynamic_lists.md](dynamic_lists.md#container-list-view-list_layout)): a themed panel the size of the widened background, title and panel texts in theme fonts, the list, and the ◀ ▶ buttons as themed arrow plates.
+- **The container list view** (`Container_list_gump`, Containers: List; see [dynamic_lists.md](dynamic_lists.md#container-list-view-list_layout)): a themed panel over the opaque area of the widened background (the transparent margin and roller ends stay outside, so its frame stays on screen at 1280x800), title and panel texts in theme fonts, the list, and the ◀ ▶ buttons as themed arrow plates.
 - **Art stays art**: contained objects, `Dynamic_shape_widget`s (including the enlarged preview), list row icons, the art of dynamic buttons, the list view's container picture with its own checkmark, and the debug grid and snap-zone overlays are painted from the game's shapes as before and laid on top of the themed panel.
 
 Ordinary container gumps, paperdolls, books, scrolls, the HUD and every gump without dynamic widgets keep their classic look.

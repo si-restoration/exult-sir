@@ -63,6 +63,21 @@ namespace Container_list_layout {
 	inline bool can_widen(const List_layout& L) {
 		return L.extra_w > 0 && L.strip_x0 >= 0 && L.strip_x0 < L.strip_x1 && L.strip_x1 <= L.bg_width;
 	}
+	// Where the themed panel goes, in gump-local pixels: the opaque area
+	// (ax, ay, aw, ah) of the unwidened background frame, widened the same
+	// way as the art (the right margin keeps its size).  An empty area
+	// gives the whole widened background.
+	struct Panel_box {
+		int x, y, w, h;
+	};
+
+	inline Panel_box panel_box(const List_layout& L, int ax, int ay, int aw, int ah) {
+		if (aw <= 0 || ah <= 0 || ax < 0 || ay < 0 || ax + aw > L.bg_width || ay + ah > L.bg_height) {
+			return {0, 0, total_w(L), L.bg_height};
+		}
+		const int right_margin = L.bg_width - (ax + aw);
+		return {ax, ay, total_w(L) - ax - right_margin, ah};
+	}
 }    // namespace Container_list_layout
 
 #endif
