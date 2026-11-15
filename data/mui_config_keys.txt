@@ -98,6 +98,31 @@ config/video/ui/*/fill_mode|string|Fit||restart|Fill mode for this UI layer when
 config/video/ui/*/fill_scaler|enum|Point|Point,Interlaced,Bilinear,BilinearPlus,2xSaI,SuperEagle,Super2xSaI,Scale2X,Hq2x,Hq3x,Hq4x,2xBR,3xBR,4xBR|restart|Fill scaler for this UI layer when ui/universal is off.
 config/video/ui/*/palette|enum|disabled|disabled,day,dusk,invisible,overcast,fog,spell,candle,red,lightning,single_light,many_lights|restart|Palette for this UI layer when ui/universal is off.
 
+# --- Video: shaded light -----------------------------------------------------
+config/video/shaded_light/enabled|bool|no||restart|Shaded light: light the night with height-aware light pools from every lamp, candle and torch, with traced shadows.
+config/video/shaded_light|bool|no||restart|Old shaded light switch (first test builds). yes still turns shaded light on, as config/video/shaded_light/enabled does.
+config/video/shaded_light/brightness|int|100|0..1000|now|Shaded light: brightness of every light in per cent.
+config/video/shaded_light/radius|int|100|0..1000|now|Shaded light: reach of every light in per cent of its radius.
+config/video/shaded_light/ambient|int|100|0..1000|now|Shaded light: brightness of the night away from lights, in per cent of the night palette's own level.
+config/video/shaded_light/softness|int|100|1..1000|now|Shaded light: softness of the light falloff in per cent. Higher needs more light to reach full brightness.
+config/video/shaded_light/facing|int|50|0..100|now|Shaded light: how much light a wall gets that faces away from the light, in per cent.
+config/video/shaded_light/dither|bool|yes||now|Shaded light: dither the light levels to hide banding.
+config/video/shaded_light/threads|int|0|0..64|restart|Shaded light: worker threads for the light pass. 0 picks one per core, up to 8.
+config/video/shaded_light/shadows|bool|yes||now|Shaded light: walls, roofs, people and furniture cast shadows from the lights.
+config/video/shaded_light/shadow_strength|int|100|0..100|now|Shaded light: darkness of a full shadow in per cent.
+config/video/shaded_light/shadow_softness|int|100|0..1000|now|Shaded light: softness of the shadow edges in per cent of half a tile. 0 gives hard edges.
+config/video/shaded_light/night_tint|int|0|0..100|now|Shaded light: recolours the night away from lights. 0 is the game's own night colours, 50 neutral grey, 100 cool blue. Lamp and fire light stay warm.
+config/video/shaded_light/shadow_lights|int|4|1..16|now|Shaded light: how many lights per screen block are traced against people and objects on screen. The others only use the occlusion grid.
+config/video/shaded_light/shadow_resolution|int|2|1..4|now|Shaded light: block size in pixels of the on-screen shadow trace: 1, 2 or 4. Smaller is sharper and slower.
+config/video/shaded_light/weather/enabled|bool|yes||now|Shaded light: weather lighting (overcast, cloud shadows, fog, lightning and lit rain and snow).
+config/video/shaded_light/weather/cloud_softness|int|6|0..32|now|Shaded light: softness of cloud shadow edges, in tiles.
+config/video/shaded_light/weather/fog_height|int|4|1..16|now|Shaded light: height of the fog layer, in tiles.
+config/video/shaded_light/weather/fog_distance|int|6|1..64|now|Shaded light: distance in tiles over which fog hides the scene.
+config/video/shaded_light/weather/fog_fade|int|3|0..16|now|Shaded light: how many tiles of fog edge fade out.
+config/video/shaded_light/weather/lightning_shadows|bool|yes||now|Shaded light: lightning flashes cast shadows.
+config/video/shaded_light/weather/precipitation|bool|yes||now|Shaded light: rain and snow are lit by the lamps.
+config/video/shaded_light/*|int|100|0..1000|now|Shaded light: a per cent slider of the light pass.
+config/video/shaded_light_grid|bool|no||restart|Build the occlusion grid of walls and roofs even with shadows off (for its debug dumps). Shadows turn it on by themselves.
 # --- Audio -------------------------------------------------------------------
 config/audio/enabled|bool|yes||restart|Turn all sound on or off. Anything other than no counts as on.
 config/audio/sample_rate|int|44100|8000..192000|restart|Mixer sample rate in Hz.
