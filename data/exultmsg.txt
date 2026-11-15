@@ -716,6 +716,8 @@
 0x857:Toggle egg area display
 #CLEAR_SELECTED
 0x858: Clear selection
+#SHADED_LIGHT_VIEW
+0x859:Cycle shaded light debug view
 
 
 #Shape Browser Help

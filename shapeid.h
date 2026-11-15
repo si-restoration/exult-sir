@@ -70,6 +70,19 @@ enum Pixel_colors {
 };
 
 /*
+ *  Told about every shape Shape_manager::paint_shape is about to paint,
+ *  before it is drawn.  Used by the shaded light scene record (see
+ *  shadedlight.h); header-only so tools that include this file need nothing
+ *  extra at link time.
+ */
+class Shape_paint_listener {
+public:
+	virtual ~Shape_paint_listener() = default;
+	// translucent: the pixels in [0xff - xfcnt, 0xfe] are blended, not drawn.
+	virtual void shape_painted(int xoff, int yoff, Shape_frame& shape, bool translucent, int xfcnt) = 0;
+};
+
+/*
  *  Manage the set of shape files.
  */
 class Shape_manager : public Game_singletons {
@@ -98,8 +111,9 @@ private:
 	bool got_si_shapes      = false;    // Set true if the SI shapes file
 	//   is found when playing BG
 	using Shape_cache = std::map<std::pair<int, int>, Cached_shape>;
-	Shape_cache shape_cache[static_cast<int>(SF_COUNT)];
-	void        read_shape_info();
+	Shape_cache           shape_cache[static_cast<int>(SF_COUNT)];
+	Shape_paint_listener* paint_listener = nullptr;    // Told about each shape painted.
+	void                  read_shape_info();
 
 public:
 	friend class ShapeID;
@@ -167,8 +181,17 @@ public:
 		return got_si_shapes;
 	}
 
+	// Set (or clear, with nullptr) the listener told about painted shapes.
+	void set_paint_listener(Shape_paint_listener* listener) {
+		paint_listener = listener;
+	}
+
 	// Paint shape in window.
 	void paint_shape(int xoff, int yoff, Shape_frame* shape, bool translucent = false, unsigned char* trans = nullptr) {
+		if (shape && shape->get_data() && paint_listener) {
+			// Remapped shapes are drawn opaque.
+			paint_listener->shape_painted(xoff, yoff, *shape, translucent && !trans, static_cast<int>(xforms.size()));
+		}
 		if (!shape || !shape->get_data()) {
 			CERR("nullptr SHAPE!!!");
 		} else if (!shape->is_rle()) {

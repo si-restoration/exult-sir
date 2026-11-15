@@ -44,6 +44,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "objiter.h"
 #include "objs.h"
 #include "ordinfo.h"
+#include "shadedgrid.h"
 #include "shapeinf.h"
 
 using std::rand;
@@ -932,6 +933,7 @@ void Map_chunk::add(
 	if (cache) {    // Add to cache.
 		cache->update_object(this, newobj, true);
 	}
+	Shaded_grid_object_changed(newobj);
 	// Count light sources.
 	if (ord.info.get_object_light(newobj->get_framenum()) > 0) {
 		if (dungeon_levels && is_dungeon(newobj->get_tx(), newobj->get_ty())) {
@@ -976,6 +978,7 @@ void Map_chunk::remove_egg(Egg_object* egg) {
 
 void Map_chunk::remove(Game_object* remove) {
 	assert(remove->get_chunk() == this);
+	Shaded_grid_object_changed(remove);
 	if (cache) {    // Remove from cache.
 		cache->update_object(this, remove, false);
 	}

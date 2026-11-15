@@ -115,7 +115,8 @@ EXULT_BG_FLX_OBJECTS = \
 	bg/intro_hand.shp \
 	bg/gump_info.txt \
 	bg/global_flags.txt \
-	bg/doctor_rules.txt
+	bg/doctor_rules.txt \
+	bg/shaded_light.txt
 
 EXULT_BG_INTROSFX_MT32_OBJECTS = \
 	bg/introsfx_mt.in \
@@ -171,7 +172,8 @@ EXULT_SI_FLX_OBJECTS = \
 	si/ext_intro_sanctum3.flc \
 	si/gump_info.txt \
 	si/global_flags.txt \
-	si/doctor_rules.txt
+	si/doctor_rules.txt \
+	si/shaded_light.txt
 
 EXULT_BG_PAPERDOL_VGA_OBJECTS = \
 	bg/amulets.shp \

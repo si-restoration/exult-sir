@@ -437,6 +437,9 @@ for /f "tokens=* delims=" %%u in ('git ls-remote --get-url') do echo #define GIT
     <ClCompile Include="..\..\gamemgr\modmgr.cc" />
     <ClCompile Include="..\..\gamemgr\sigame.cc" />
     <ClCompile Include="..\..\gamerend.cc" />
+    <ClCompile Include="..\..\shadedlight.cc" />
+    <ClCompile Include="..\..\shadedgrid.cc" />
+    <ClCompile Include="..\..\shadedweather.cc" />
     <ClCompile Include="..\..\gamewin.cc" />
     <ClCompile Include="..\..\gumps\Actor_gump.cc" />
     <ClCompile Include="..\..\gumps\AudioOptions_gump.cc" />
@@ -692,6 +695,10 @@ for /f "tokens=* delims=" %%u in ('git ls-remote --get-url') do echo #define GIT
     <ClInclude Include="..\..\gamemgr\modmgr.h" />
     <ClInclude Include="..\..\gamemgr\sigame.h" />
     <ClInclude Include="..\..\gamerend.h" />
+    <ClInclude Include="..\..\shadedlight.h" />
+    <ClInclude Include="..\..\shadedgrid.h" />
+    <ClInclude Include="..\..\shadedgrid_data.h" />
+    <ClInclude Include="..\..\shadedweather.h" />
     <ClInclude Include="..\..\gamewin.h" />
     <ClInclude Include="..\..\gitinfo.h" />
     <ClInclude Include="..\..\gumps\Actor_gump.h" />

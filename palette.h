@@ -54,10 +54,18 @@ class Palette {
 	bool           border255;
 	bool           faded_out;    // true if faded palette to black.
 	bool           fades_enabled;
+	// Shaded light: loaded by number for the world, or a clock transition
+	// into or out of a lightable palette.
+	bool           shaded_world      = false;
+	bool           shaded_transition = false;
 	void           set_loaded(const U7multiobject& pal, const char* xfname, int xindex);
 	void           loadxform(const unsigned char* buf, const char* xfname, int& xindex);
 	// Push fixed-palette overrides to the layers.
 	void update_ui_layer_palettes();
+	// The colours to display for src: buf filled by shaded light, or src.
+	const unsigned char* shaded_colours(const unsigned char* src, unsigned char* buf) const;
+	// pal1 with the border colour, through shaded_colours.
+	void border_colours(unsigned char out[768]);
 
 	static unsigned char border[3];
 
@@ -110,7 +118,8 @@ public:
 	void                     fade_out(int cycles);
 	int                      find_color(int r, int g, int b, int last = 0xe0) const;
 	void                     create_palette_map(const Palette* to, unsigned char* buf) const;
-	std::unique_ptr<Palette> create_intermediate(const Palette& to, int nsteps, int pos) const;
+	std::unique_ptr<Palette> create_intermediate(
+			const Palette& to, int nsteps, int pos, bool shaded_transition = false) const;
 	void                     create_trans_table(unsigned char br, unsigned bg, unsigned bb, int alpha, unsigned char* table) const;
 	void                     show();
 
@@ -132,6 +141,10 @@ public:
 
 	int get_palette_index() const {
 		return palette;
+	}
+
+	void set_shaded_transition(bool t) {
+		shaded_transition = t;
 	}
 
 	static void set_border(int r, int g, int b) {
@@ -188,6 +201,7 @@ class Palette_transition {
 	int                      step, max_steps;
 	int                      start_hour, start_minute, start_ticks;
 	int                      rate;
+	int                      from_palette, to_palette;    // palettes.flx numbers, or -1.
 
 public:
 	Palette_transition(int from, int to, int ch, int cm, int ct, int, int nsteps, int sh, int smin, int stick);

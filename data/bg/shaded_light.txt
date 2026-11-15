@@ -1,0 +1,172 @@
+#	Exult shaded light table for Black Gate.
+#
+#	How each light source lights the world when the shaded light renderer
+#	(config/video/shaded_light/enabled) is on.  Rows only apply to objects
+#	the engine already treats as lights, that is shapes with a light_data
+#	row in shape_info.txt (or the light flag); a mod makes a new light
+#	source there, as before, and tunes it here.
+#
+#	A mod overrides rows with its own <PATCH>/shaded_light.txt, which only
+#	needs the rows it changes (same shape and frame replace a row here).
+#
+#	Format
+#		:shape/frame/radius/brightness/red/green/blue/height/flags
+#
+#	frame		-1 = every frame not listed for that shape.  Frames are
+#				matched after masking with 31, as for light_data.
+#	radius		In tiles.
+#	brightness	Percent; 100 = a torch.
+#	red/green/blue	Colour of the light, 0-255.  Only used where the
+#				renderer can show colour; the 8-bit path uses
+#				brightness only.
+#	height		Lifts above the object's base; -1 = top of its 3D box.
+#	flags		Sum of: 1 = area light (even light over its radius,
+#				horizontal distance only, lighting surfaces from its
+#				lift to 6 lifts above), 2 = off (the shape gives no
+#				shaded light).
+#
+#	Lights without a row use the formula these rows were made with, where
+#	b is the shape's light_data brightness (candle 1, torch 5, lamp 7):
+#		radius 3 + b, brightness 50 + 10 * b, colour 255/214/170,
+#		height -1, flags 0.
+#
+%%section version
+:1
+%%endsection
+%%section lights
+#	Lightning.
+:179/-1/8/100/255/214/170/-1/0
+#	Light.
+:198/-1/6/80/255/214/170/-1/0
+#	Lit light source.
+:338/2/5/70/255/214/170/-1/0
+:338/3/8/100/255/214/170/-1/0
+:338/4/8/100/255/214/170/-1/0
+:338/5/8/100/255/214/170/-1/0
+:338/7/5/70/255/214/170/-1/0
+:338/8/5/70/255/214/170/-1/0
+:338/9/5/70/255/214/170/-1/0
+:338/10/8/100/255/214/170/-1/0
+:338/11/8/100/255/214/170/-1/0
+:338/12/5/70/255/214/170/-1/0
+:338/-1/4/60/255/214/170/-1/0
+#	Lit sconce.
+:435/-1/8/100/255/214/170/-1/0
+#	Lit lamp.
+:526/-1/10/120/255/214/170/-1/0
+#	Fire sword.
+:551/-1/8/100/255/214/170/-1/0
+#	Firedoom staff.
+:553/-1/8/100/255/214/170/-1/0
+#	Lit torch.
+:701/-1/8/100/255/214/170/-1/0
+#	Firepit.
+:739/1/5/70/255/214/170/-1/0
+:739/2/7/90/255/214/170/-1/0
+:739/3/9/110/255/214/170/-1/0
+:739/5/5/70/255/214/170/-1/0
+:739/6/7/90/255/214/170/-1/0
+:739/7/9/110/255/214/170/-1/0
+#	Flaming oil.
+:782/-1/8/100/255/214/170/-1/0
+#	Campfire.
+:825/-1/10/120/255/214/170/-1/0
+#	Not original light sources:
+#	Laboratory burner.
+:307/1/4/60/255/214/170/-1/0
+#	Lightning whip.
+:549/-1/8/100/255/214/170/-1/0
+#	Stove.
+:664/1/4/60/255/214/170/-1/0
+#	Sword blank.
+:668/1/4/60/255/214/170/-1/0
+:668/2/4/60/255/214/170/-1/0
+:668/3/5/70/255/214/170/-1/0
+:668/4/6/80/255/214/170/-1/0
+#	Baking hearth.
+:831/-1/5/70/255/214/170/-1/0
+#	Moongates.
+:157/-1/4/60/255/214/170/-1/0
+:776/-1/4/60/255/214/170/-1/0
+:777/-1/4/60/255/214/170/-1/0
+:779/-1/4/60/255/214/170/-1/0
+#	FoV mirror.
+:848/3/4/60/255/214/170/-1/0
+:848/4/4/60/255/214/170/-1/0
+:848/5/4/60/255/214/170/-1/0
+:848/6/4/60/255/214/170/-1/0
+:848/7/4/60/255/214/170/-1/0
+:848/8/4/60/255/214/170/-1/0
+:848/9/4/60/255/214/170/-1/0
+#	Hidden light circles: none confirmed yet.  An area row (flags 1, e.g.
+#	radius 8, brightness 35) belongs only to a light whose object paints no
+#	pixels.  Shape 336 ("light source") is the unlit candle, not a light;
+#	shape 440 ("light") has the light flag but paints a visible 62x63 frame,
+#	so it keeps the formula default (b = 1) until a dump shows otherwise:
+#:440/-1/8/35/255/240/210/0/1
+%%endsection
+%%section volumes
+#	Rounded volumes: the shape the shaded light renderer gives an object's
+#	pixels (config/video/shaded_light/rounded; off = every object its 3D
+#	box).  A rounded volume is fitted to the object's 3D box and to the
+#	silhouette of its art, so its heights rise towards the middle of the
+#	shape and its surface turns smoothly towards the lights; its shadow is
+#	that volume, not the box.
+#
+#	Format
+#		:shape/frame/kind
+#
+#	frame		-1 = every frame not listed for that shape; frames are
+#				matched after masking with 31.
+#	kind		0 = box, 1 = figure (vertical capsule: people),
+#				2 = round (ellipsoid: bushes, rocks), 3 = upright
+#				(cylinder with a rounded top: barrels, pillars,
+#				dead trees), 4 = tree (trunk capsule under a crown).
+#
+#	Without a row, actors (NPCs, the party, monsters) are figures and
+#	everything else is its box.  A row overrides both ways: a mod's
+#	<PATCH>/shaded_light.txt can make a statue a figure (kind 1) or an
+#	actor shape a box (kind 0), and only needs the rows it changes.
+#	Trees.
+:181/-1/4
+:310/-1/4
+:327/-1/4
+:328/-1/4
+:332/-1/4
+:453/-1/4
+:631/-1/4
+:643/-1/4
+:670/-1/4
+:674/-1/4
+:683/-1/4
+:783/-1/4
+:932/-1/4
+#	Tree top (a crown without a trunk).
+:826/-1/2
+#	Dead trees.
+:185/-1/3
+:325/-1/3
+#	Bushes, shrubbery and plants.
+:160/-1/2
+:326/-1/2
+:672/-1/2
+:673/-1/2
+:922/-1/2
+:999/-1/2
+#	Rocks and boulders.
+:203/-1/2
+:316/-1/2
+:331/-1/2
+:341/-1/2
+:342/-1/2
+:343/-1/2
+#	Barrel.
+:819/-1/3
+#	Pillars.
+:687/-1/3
+:913/-1/3
+:920/-1/3
+#	Cactus.
+:669/-1/3
+:817/-1/3
+%%endsection

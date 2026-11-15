@@ -30,6 +30,7 @@
 #include "gamewin.h"
 #include "ibuf8.h"
 #include "ignore_unused_variable_warning.h"
+#include "shadedlight.h"
 #include "utils.h"
 
 #include <algorithm>
@@ -92,6 +93,7 @@ void Palette::fade(
 	border255 = (palette >= 0 && palette <= 12) && palette != 9;
 
 	load(PALETTES_FLX, PATCH_PALETTES, pal_num);
+	shaded_world = true;
 	if (inout) {
 		fade_in(cycles);
 	} else {
@@ -139,6 +141,7 @@ void Palette::set(
 
 	// could throw!
 	load(PALETTES_FLX, PATCH_PALETTES, palette);
+	shaded_world = true;
 	set_brightness(brightness);
 	apply(repaint);
 }
@@ -154,7 +157,8 @@ void Palette::set(
 	this->border255 = border255;
 	memcpy(pal1, palnew, 768);
 	memset(pal2, 0, 768);
-	palette = -1;
+	palette      = -1;
+	shaded_world = false;
 	if (new_brightness > 0) {
 		brightness = new_brightness;
 	}
@@ -177,7 +181,8 @@ void Palette::apply(bool repaint) {
 		pal1[255 * 3 + 2] = border[2] * 63 / 255;
 	}
 
-	win->set_palette(pal1, max_val, brightness);
+	unsigned char shaded[768];
+	win->set_palette(shaded_colours(pal1, shaded), max_val, brightness);
 
 	pal1[255 * 3 + 0] = r;
 	pal1[255 * 3 + 1] = g;
@@ -191,6 +196,19 @@ void Palette::apply(bool repaint) {
 		return;
 	}
 	win->show();
+}
+
+/*
+ *  With shaded light lighting the world, the screen shows its palette
+ *  instead of the whole-screen light palette.
+ */
+
+const unsigned char* Palette::shaded_colours(const unsigned char* src, unsigned char* buf) const {
+	if ((shaded_world || shaded_transition || this == Game_window::get_instance()->get_pal())
+		&& Shaded_light::get().filter_palette(src, palette, shaded_world, shaded_transition, buf)) {
+		return buf;
+	}
+	return src;
 }
 
 /*
@@ -352,6 +370,7 @@ void Palette::set_loaded(const U7multiobject& pal, const char* xfname, int xinde
 void Palette::load(const File_spec& fname0, int index, const char* xfname, int xindex) {
 	const U7multiobject pal(fname0, index);
 	set_loaded(pal, xfname, xindex);
+	shaded_world = false;
 }
 
 /**
@@ -366,6 +385,7 @@ void Palette::load(const File_spec& fname0, int index, const char* xfname, int x
 void Palette::load(const File_spec& fname0, const File_spec& fname1, int index, const char* xfname, int xindex) {
 	const U7multiobject pal(fname0, fname1, index);
 	set_loaded(pal, xfname, xindex);
+	shaded_world = false;
 }
 
 /**
@@ -382,34 +402,47 @@ void Palette::load(
 		const File_spec& fname0, const File_spec& fname1, const File_spec& fname2, int index, const char* xfname, int xindex) {
 	const U7multiobject pal(fname0, fname1, fname2, index);
 	set_loaded(pal, xfname, xindex);
+	shaded_world = false;
 }
 
 void Palette::set_brightness(int bright) {
 	brightness = bright;
 }
 
+/*
+ *  The colours a fade starts or ends at: pal1 with the border colour, as
+ *  shaded light displays them.
+ */
+
+void Palette::border_colours(unsigned char out[768]) {
+	const uint8 r = pal1[255 * 3 + 0];
+	const uint8 g = pal1[255 * 3 + 1];
+	const uint8 b = pal1[255 * 3 + 2];
+
+	if (border255) {
+		pal1[255 * 3 + 0] = border[0] * 63 / 255;
+		pal1[255 * 3 + 1] = border[1] * 63 / 255;
+		pal1[255 * 3 + 2] = border[2] * 63 / 255;
+	}
+
+	unsigned char shaded[768];
+	memcpy(out, shaded_colours(pal1, shaded), 768);
+
+	pal1[255 * 3 + 0] = r;
+	pal1[255 * 3 + 1] = g;
+	pal1[255 * 3 + 2] = b;
+}
+
 void Palette::fade_in(int cycles) {
 	if (cycles && fades_enabled) {
 		unsigned char fade_pal[768];
+		unsigned char from[768];    // Faded from, with the border.
 		unsigned int  ticks = SDL_GetTicks() + 20;
+		border_colours(from);
 		for (int i = 0; i <= cycles; i++) {
-			const uint8 r = pal1[255 * 3 + 0];
-			const uint8 g = pal1[255 * 3 + 1];
-			const uint8 b = pal1[255 * 3 + 2];
-
-			if (border255) {
-				pal1[255 * 3 + 0] = border[0] * 63 / 255;
-				pal1[255 * 3 + 1] = border[1] * 63 / 255;
-				pal1[255 * 3 + 2] = border[2] * 63 / 255;
-			}
-
 			for (int c = 0; c < 768; c++) {
-				fade_pal[c] = ((pal1[c] - pal2[c]) * i) / cycles + pal2[c];
+				fade_pal[c] = ((from[c] - pal2[c]) * i) / cycles + pal2[c];
 			}
-
-			pal1[255 * 3 + 0] = r;
-			pal1[255 * 3 + 1] = g;
-			pal1[255 * 3 + 2] = b;
 
 			win->set_palette(fade_pal, max_val, brightness);
 
@@ -432,7 +465,8 @@ void Palette::fade_in(int cycles) {
 			pal1[255 * 3 + 2] = border[2] * 63 / 255;
 		}
 
-		win->set_palette(pal1, max_val, brightness);
+		unsigned char shaded[768];
+		win->set_palette(shaded_colours(pal1, shaded), max_val, brightness);
 
 		pal1[255 * 3 + 0] = r;
 		pal1[255 * 3 + 1] = g;
@@ -446,25 +480,13 @@ void Palette::fade_out(int cycles) {
 	faded_out = true;    // Be sure to set flag.
 	if (cycles && fades_enabled) {
 		unsigned char fade_pal[768];
+		unsigned char from[768];    // Faded from, with the border.
 		unsigned int  ticks = SDL_GetTicks() + 20;
+		border_colours(from);
 		for (int i = cycles; i >= 0; i--) {
-			const uint8 r = pal1[255 * 3 + 0];
-			const uint8 g = pal1[255 * 3 + 1];
-			const uint8 b = pal1[255 * 3 + 2];
-
-			if (border255) {
-				pal1[255 * 3 + 0] = border[0] * 63 / 255;
-				pal1[255 * 3 + 1] = border[1] * 63 / 255;
-				pal1[255 * 3 + 2] = border[2] * 63 / 255;
-			}
-
 			for (int c = 0; c < 768; c++) {
-				fade_pal[c] = ((pal1[c] - pal2[c]) * i) / cycles + pal2[c];
+				fade_pal[c] = ((from[c] - pal2[c]) * i) / cycles + pal2[c];
 			}
-
-			pal1[255 * 3 + 0] = r;
-			pal1[255 * 3 + 1] = g;
-			pal1[255 * 3 + 2] = b;
 
 			win->set_palette(fade_pal, max_val, brightness);
 			// Frame skipping on slow systems
@@ -517,7 +539,8 @@ void Palette::create_palette_map(const Palette* to, unsigned char* buf) const {
  *  Creates a palette in-between two palettes.
  */
 
-std::unique_ptr<Palette> Palette::create_intermediate(const Palette& to, int nsteps, int pos) const {
+std::unique_ptr<Palette> Palette::create_intermediate(
+		const Palette& to, int nsteps, int pos, bool shaded_transition) const {
 	auto newpal = std::make_unique<Palette>();
 	if (fades_enabled) {
 		for (int c = 0; c < 768; c++) {
@@ -535,7 +558,8 @@ std::unique_ptr<Palette> Palette::create_intermediate(const Palette& to, int nst
 
 	// Reset palette data and set.
 	memset(newpal->pal2, 0, 768);
-	newpal->border255 = true;
+	newpal->border255         = true;
+	newpal->shaded_transition = shaded_transition;
 	newpal->apply(true);
 	return newpal;
 }
@@ -576,6 +600,7 @@ void Palette::set_color(int nr, int r, int g, int b) {
 void Palette::set_palette(const unsigned char palnew[768]) {
 	memcpy(pal1, palnew, 768);
 	memset(pal2, 0, 768);
+	shaded_world = false;
 }
 
 const Palette::Ramp* Palette::get_ramps(unsigned int& num_ramps) {
@@ -724,7 +749,8 @@ void Palette::Generate_remap_xformtable(uint8 table[256], const int* remaps) {
 }
 
 Palette_transition::Palette_transition(int from, int to, int ch, int cm, int ct, int r, int nsteps, int sh, int smin, int stick)
-		: current(nullptr), step(0), max_steps(nsteps), start_hour(sh), start_minute(smin), start_ticks(stick), rate(r) {
+		: current(nullptr), step(0), max_steps(nsteps), start_hour(sh), start_minute(smin), start_ticks(stick), rate(r),
+		  from_palette(from), to_palette(to) {
 	start.load(PALETTES_FLX, PATCH_PALETTES, from);
 	end.load(PALETTES_FLX, PATCH_PALETTES, to);
 	set_step(ch, cm, ct);
@@ -733,7 +759,7 @@ Palette_transition::Palette_transition(int from, int to, int ch, int cm, int ct,
 Palette_transition::Palette_transition(
 		Palette* from, int to, int ch, int cm, int ct, int r, int nsteps, int sh, int smin, int stick)
 		: start(from), current(nullptr), step(0), max_steps(nsteps), start_hour(sh), start_minute(smin), start_ticks(stick),
-		  rate(r) {
+		  rate(r), from_palette(from->get_palette_index()), to_palette(to) {
 	end.load(PALETTES_FLX, PATCH_PALETTES, to);
 	set_step(ch, cm, ct);
 }
@@ -741,7 +767,7 @@ Palette_transition::Palette_transition(
 Palette_transition::Palette_transition(
 		Palette* from, Palette* to, int ch, int cm, int ct, int r, int nsteps, int sh, int smin, int stick)
 		: start(from), end(to), current(nullptr), step(0), max_steps(nsteps), start_hour(sh), start_minute(smin),
-		  start_ticks(stick), rate(r) {
+		  start_ticks(stick), rate(r), from_palette(from->get_palette_index()), to_palette(to->get_palette_index()) {
 	set_step(ch, cm, ct);
 }
 
@@ -759,12 +785,16 @@ bool Palette_transition::set_step(int hour, int min, int tick) {
 		return false;
 	}
 
+	// Shaded light lights the world through transitions into or out of the
+	// night palettes.  (start and end were loaded, so they hold no number.)
+	const bool shaded = Shaded_light::lightable_palette(from_palette) || Shaded_light::lightable_palette(to_palette);
 	if (!current || new_step != step) {
 		step    = new_step;
-		current = start.create_intermediate(end, max_steps, step);
+		current = start.create_intermediate(end, max_steps, step, shaded);
 	}
 
 	if (current) {
+		current->set_shaded_transition(shaded);
 		// Apply the palette but do NOT present from here. A present from here would
 		// show a cursor-less frame -> the pointer flickers for the duration
 		// of the transition. Marking the window painted defers the present to

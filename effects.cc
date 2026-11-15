@@ -40,6 +40,7 @@
 #include "gamemap.h"
 #include "gamewin.h"
 #include "ignore_unused_variable_warning.h"
+#include "shadedweather.h"
 #include "shapeinf.h"
 #include "ucmachine.h"
 #include "weaponinf.h"
@@ -56,6 +57,8 @@
 #ifdef __GNUC__
 #	pragma GCC diagnostic pop
 #endif    // __GNUC__
+
+#include <type_traits>
 
 using namespace Pentagram;
 
@@ -429,6 +432,22 @@ void Effects_manager::paint() {
 	for (auto& effect : effects) {
 		effect->paint();
 	}
+}
+
+/**
+ *  Report the weather shown to shaded light.
+ */
+
+void Effects_manager::get_shaded_weather(Shaded_weather_input& in) const {
+	for (const auto& effect : effects) {
+		if (effect->is_weather()) {
+			static_cast<const Weather_effect*>(effect.get())->add_shaded_weather(in);
+		}
+	}
+}
+
+void Weather_effect::add_shaded_weather(Shaded_weather_input& in) const {
+	ignore_unused_variable_warning(in);
 }
 
 /**
@@ -1568,6 +1587,18 @@ public:
 		return false;
 	}
 
+	// Rain and snow take the lamps' light in shaded light; sparkles glow
+	// by themselves.
+	static constexpr bool lamp_lit = std::is_same_v<Functor, Raindrop> || std::is_same_v<Functor, Snowflake>;
+
+	void add_shaded_weather(Shaded_weather_input& in) const override {
+		if constexpr (std::is_same_v<Functor, Raindrop>) {
+			in.rain = true;
+		} else if constexpr (std::is_same_v<Functor, Snowflake>) {
+			in.snow = true;
+		}
+	}
+
 	// Execute when due.
 	void handle_event(
 			unsigned long curtime,    // Current time of day.
@@ -1609,9 +1640,12 @@ public:
 		Image_window8* win      = gwin->get_win();
 		const int      w        = win->get_game_width();
 		const int      h        = win->get_game_height();
+		Shaded_light&  shaded   = Shaded_light::get();
+		shaded.begin_particles(lamp_lit);
 		for (int i = 0; i < num_drops; i++) {
 			do_drop.paint(drops[i], scrolltx, scrollty, w, h);
 		}
+		shaded.end_particles();
 		gwin->set_painted();
 	}
 };
@@ -1622,6 +1656,7 @@ public:
 
 Lightning_effect::~Lightning_effect() {
 	if (flashing) {    // Be sure palette is restored.
+		Shaded_light::get().lightning(false);
 		Game_window::get_instance()->get_clock()->set_palette();
 	}
 }
@@ -1636,6 +1671,7 @@ void Lightning_effect::handle_event(
 	const int r     = rand();    // Get a random #.
 	int       delay = 100;       // Delay for next time.
 	if (flashing) {              // Just turned white?  Restore.
+		Shaded_light::get().lightning(false);
 		gclock->set_palette();
 		flashing = false;
 		active   = false;
@@ -1654,7 +1690,9 @@ void Lightning_effect::handle_event(
 		Audio::get_ptr()->play_sound_effect(Audio::game_sfx(62));
 		active   = true;
 		flashing = true;
-		gwin->get_pal()->set(PALETTE_LIGHTNING);
+		if (!Shaded_light::get().lightning(true)) {
+			gwin->get_pal()->set(PALETTE_LIGHTNING);
+		}
 		delay = (1 + r % 2) * 25;
 	}
 	gwin->get_tqueue()->add(curtime + delay, this, udata);
@@ -1794,6 +1832,16 @@ void Fog_effect::handle_event(unsigned long curtime, uintptr udata) {
 }
 
 /**
+ *  Report the fog to shaded light once it has set in.
+ */
+
+void Fog_effect::add_shaded_weather(Shaded_weather_input& in) const {
+	if (!start) {
+		in.fog = true;
+	}
+}
+
+/**
  *  Create a cloud.
  */
 
@@ -1899,6 +1947,16 @@ void Cloud::paint() {
 }
 
 /**
+ *  Report the cloud where it would be painted.
+ */
+
+void Cloud::add_shaded_weather(Shaded_weather_input& in) const {
+	if (count > 0) {    // Might not have been started.
+		in.clouds.push_back(Shaded_cloud_source{wx, wy, cloud.get_shape()});
+	}
+}
+
+/**
  *  Create a few clouds to float across the screen.
  */
 
@@ -1965,10 +2023,25 @@ void Clouds_effect::handle_event(
  */
 
 void Clouds_effect::paint() {
+	// Shaded light shows the clouds as their shadows in the sky light.
+	if (Shaded_light::get().cloud_shadows_shown()) {
+		return;
+	}
 	if (!gwin->is_main_actor_inside() && !gumpman->showing_gumps(true)) {
 		for (auto& cloud : clouds) {
 			cloud->paint();
 		}
+	}
+}
+
+/**
+ *  Report the clouds to shaded light.
+ */
+
+void Clouds_effect::add_shaded_weather(Shaded_weather_input& in) const {
+	in.clouds_effect = true;
+	for (const auto& cloud : clouds) {
+		cloud->add_shaded_weather(in);
 	}
 }
 

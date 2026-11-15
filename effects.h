@@ -32,6 +32,7 @@
 #include <string>
 #include <vector>
 
+struct Shaded_weather_input;
 class IDataSource;
 class ODataSource;
 class Xform_palette;
@@ -81,6 +82,8 @@ public:
 	// Remove just the weather.
 	void remove_weather_effects(int dist = 0);
 	void remove_usecode_lightning();
+	// What shaded light needs to know about the weather shown.
+	void get_shaded_weather(Shaded_weather_input& in) const;
 	// Weather in savegames (gamewin.dat). read_weather() only reads it;
 	// restore_weather() starts it once the game is set up.
 	void write_weather(ODataSource& out) const;
@@ -336,6 +339,9 @@ public:
 	void set_restored(bool tf) {
 		restored = tf;
 	}
+
+	// Report this weather to shaded light (nothing by default).
+	virtual void add_shaded_weather(Shaded_weather_input& in) const;
 };
 
 /*
@@ -349,6 +355,7 @@ public:
 	~Fog_effect() override;
 	// Execute when due.
 	void handle_event(unsigned long curtime, uintptr udata) override;
+	void add_shaded_weather(Shaded_weather_input& in) const override;
 };
 
 /*
@@ -428,6 +435,8 @@ public:
 	// Move to next position & paint.
 	void next(Game_window* gwin, unsigned long curtime, int w, int h);
 	void paint();
+	// Report the cloud, once started, to shaded light.
+	void add_shaded_weather(Shaded_weather_input& in) const;
 };
 
 /*
@@ -444,6 +453,7 @@ public:
 	void handle_event(unsigned long curtime, uintptr udata) override;
 	// Render.
 	void paint() override;
+	void add_shaded_weather(Shaded_weather_input& in) const override;
 	~Clouds_effect() override;
 };
 

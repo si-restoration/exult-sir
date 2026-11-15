@@ -39,6 +39,7 @@
 #include "ignore_unused_variable_warning.h"
 #include "objiter.h"
 #include "perf.h"
+#include "shadedlight.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -61,6 +62,7 @@ void Game_window::paint_map_at_tile(
 	map->read_map_data();    // Gather in all objs., etc.
 	win->set_clip(x, y, w, h);
 	render->paint_map(0, 0, get_width(), get_height());
+	Shaded_light::get().relight_ambient(*win, x, y, w, h);
 	win->clear_clip();
 	scrolltx  = savescrolltx;
 	scrollty  = savescrollty;
@@ -333,6 +335,19 @@ void Game_window::paint(
 	if (!win->ready()) {
 		return;
 	}
+	if (main_actor && Shaded_light::get().prepare_paint()) {
+		// The lighting changed, so the whole game area is painted again.
+		const int x1 = std::max(x + w, get_width());
+		const int y1 = std::max(y + h, get_height());
+		x            = std::min(x, 0);
+		y            = std::min(y, 0);
+		w            = x1 - x;
+		h            = y1 - y;
+	}
+	if (main_actor) {
+		// Shadows reach past the rectangle of what moved.
+		Shaded_light::get().widen_paint(x, y, w, h);
+	}
 	// This will adjust and clip the rectangle as appropriate, it may end up
 	// bigger or smaller
 	win->BeginPaintIntoGuardBand(&x, &y, &w, &h);
@@ -356,15 +371,21 @@ void Game_window::paint(
 	}
 	win->set_clip(gx, gy, gw, gh);    // Clip to this area.
 
-	int light_sources = 0;
+	int        light_sources = 0;
+	const bool full_paint    = !gx && !gy && gw == get_width() && gh == get_height();
 
 	if (main_actor) {
+		Shaded_light::get().begin_paint(*win, full_paint);
 		light_sources = render->paint_map(gx, gy, gw, gh);
+		Shaded_light::get().end_paint(*win, full_paint);
 	} else {
 		win->fill8(0);
 	}
 
 	effects->paint();    // Draw sprites.
+	if (main_actor) {
+		Shaded_light::get().finish_paint(*win, full_paint);
+	}
 
 	win->set_clip(x, y, w, h);    // Clip to this area.
 	// Fill black into unpainted regions
@@ -405,8 +426,10 @@ void Game_window::paint(
 			special_light = 0;
 			clock->set_palette();
 		}
-		// Set palette for lights.
-		clock->set_light_source(carried_light + light_sources, in_dungeon);
+		// Set palette for lights.  Shaded light lights the world itself, so
+		// the clock picks palettes with the lamps ignored.
+		clock->set_light_source(
+				Shaded_light::get().lighting_enabled() ? 0 : carried_light + light_sources, in_dungeon);
 	}
 
 	win->EndPaintIntoGuardBand();
@@ -527,6 +550,9 @@ void Game_render::paint_chunk_flats(
 	Image_buffer8* cflats = olist->get_rendered_flats();
 	if (cflats) {
 		gwin->win->copy8(cflats->get_bits(), c_chunksize, c_chunksize, xoff, yoff);
+		if (Shaded_light* const shaded = Shaded_light::recording()) {
+			shaded->record_plane(xoff, yoff, c_chunksize, c_chunksize, 0, shaded_face_ground);
+		}
 	}
 }
 
@@ -544,7 +570,16 @@ void Game_render::paint_chunk_flat_rles(
 	Flat_object_iterator next(olist);    // Do flat RLE objects.
 	Game_object*         obj;
 	while ((obj = next.get_next()) != nullptr) {
+		Shaded_light* const shaded = Shaded_light::recording();
+		if (shaded) {
+			int x, y;
+			gwin->get_shape_location(obj, x, y);
+			shaded->begin_object(*obj, x, y);
+		}
 		obj->paint();
+		if (shaded) {
+			shaded->end_object();
+		}
 	}
 }
 
@@ -609,7 +644,14 @@ void Game_render::paint_object(Game_object* obj) {
 		obj->get_info().paint_bbox(
 				bbox_x, bbox_y, obj->get_framenum(), Game_window::get_instance()->get_win()->get_ib8(), bbox_palindex, 2);
 	}
+	Shaded_light* const shaded = Shaded_light::recording();
+	if (shaded) {
+		shaded->begin_object(*obj, bbox_x, bbox_y);
+	}
 	obj->paint();    // Finally, paint this one.
+	if (shaded) {
+		shaded->end_object();
+	}
 	// paint bbox front
 	if (bbox_palindex != -1) {
 		obj->get_info().paint_bbox(
@@ -649,6 +691,9 @@ void Game_render::paint_blackness(int start_chunkx, int start_chunky, int stop_c
 	Game_window* gwin = Game_window::get_instance();
 	// Calculate the offset due to the lift (4x the lift).
 	const int off = gwin->in_dungeon << 2;
+	// The blackness is a roof at the dungeon's lift in the scene record.
+	Shaded_light* const shaded = Shaded_light::recording();
+	const int           roof   = static_cast<int>(gwin->in_dungeon);
 
 	// For each chunk that might be renderable
 	for (int cy = start_chunky; cy != stop_chunky; cy = INCR_CHUNK(cy)) {
@@ -662,6 +707,9 @@ void Game_render::paint_blackness(int start_chunkx, int start_chunky, int stop_c
 			Map_chunk* mc = gwin->map->get_chunk(cx, cy);
 			if (!mc->has_dungeon()) {
 				gwin->win->fill8(index, c_tilesize * c_tiles_per_chunk, c_tilesize * c_tiles_per_chunk, xoff, y);
+				if (shaded) {
+					shaded->record_plane(xoff, y, c_chunksize, c_chunksize, roof, shaded_face_top);
+				}
 				continue;
 			}
 			// For each line in the chunk
@@ -681,6 +729,9 @@ void Game_render::paint_blackness(int start_chunkx, int start_chunky, int stop_c
 					else if (w) {
 						// Draw blackness
 						gwin->win->fill8(index, w, c_tilesize, x, y);
+						if (shaded) {
+							shaded->record_plane(x, y, w, c_tilesize, roof, shaded_face_top);
+						}
 
 						// Set the start of the area to the next tile
 						x += w + c_tilesize;
@@ -698,6 +749,9 @@ void Game_render::paint_blackness(int start_chunkx, int start_chunky, int stop_c
 				// If we have an area, paint it.
 				if (w) {
 					gwin->win->fill8(index, w, c_tilesize, x, y);
+					if (shaded) {
+						shaded->record_plane(x, y, w, c_tilesize, roof, shaded_face_top);
+					}
 				}
 
 				// Increment the y coord for the next line

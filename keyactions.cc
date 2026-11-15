@@ -53,6 +53,7 @@
 #include "palette.h"
 #include "party.h"
 #include "perf.h"
+#include "shadedlight.h"
 #include "ucmachine.h"
 #include "version.h"
 
@@ -1002,6 +1003,20 @@ void ActionTest(const int* params) {
 
 void ActionToggleBBoxes(const int* /*params*/) {
 	Game_window::get_instance()->get_render()->increment_bbox_index();
+}
+
+//  { ActionShadedLightView, 0, "Cycle shaded light debug view", cheat_keys, NONE },
+void ActionShadedLightView(const int* params) {
+	ignore_unused_variable_warning(params);
+	Game_window*  gwin   = Game_window::get_instance();
+	Shaded_light& shaded = Shaded_light::get();
+	if (!shaded.is_enabled()) {
+		gwin->get_effects()->center_text("Shaded light is off (config/video/shaded_light)");
+		return;
+	}
+	const std::string msg = std::string("Shaded light view: ") + Shaded_light::view_name(shaded.cycle_view());
+	gwin->get_effects()->center_text(msg.c_str());
+	gwin->set_all_dirty();
 }
 
 void ActionPerfMetrics(const int* /*params*/) {

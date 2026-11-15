@@ -113,6 +113,13 @@ EXULTSOURCES =	\
 	scene_layer.h	\
 	schedule.cc	\
 	schedule.h	\
+	shadedlight.cc	\
+	shadedlight.h	\
+	shadedgrid.cc	\
+	shadedgrid.h	\
+	shadedgrid_data.h	\
+	shadedweather.cc	\
+	shadedweather.h	\
 	shapeid.cc	\
 	shapeid.h	\
 	singles.h	\

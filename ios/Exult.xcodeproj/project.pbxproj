@@ -95,6 +95,9 @@
 		8AE8B9BE2E400B740094DF3C /* SDL3.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8AE8B9BC2E400B4F0094DF3C /* SDL3.framework */; };
 		8AE8B9BF2E400B740094DF3C /* SDL3.framework in Embedd SDL3 Framework */ = {isa = PBXBuildFile; fileRef = 8AE8B9BC2E400B4F0094DF3C /* SDL3.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		8AEBA98E1475A21C0172E554 /* perf.cc in Sources */ = {isa = PBXBuildFile; fileRef = 8ADFFDFA25DE791000FC4D3A /* perf.cc */; };
+		5ADE1A0130F0C0DE00A1B003 /* shadedlight.cc in Sources */ = {isa = PBXBuildFile; fileRef = 5ADE1A0130F0C0DE00A1B002 /* shadedlight.cc */; };
+		5ADE1A0130F0C0DE00A1C003 /* shadedgrid.cc in Sources */ = {isa = PBXBuildFile; fileRef = 5ADE1A0130F0C0DE00A1C002 /* shadedgrid.cc */; };
+		5ADE1A0130F0C0DE00A1D003 /* shadedweather.cc in Sources */ = {isa = PBXBuildFile; fileRef = 5ADE1A0130F0C0DE00A1D002 /* shadedweather.cc */; };
 		8AF2AFDF2016708100696E08 /* joypad-glass-southwest.png in Resources */ = {isa = PBXBuildFile; fileRef = 8AF2AFD62016707F00696E08 /* joypad-glass-southwest.png */; };
 		8AF2AFE02016708100696E08 /* joypad-glass-north.png in Resources */ = {isa = PBXBuildFile; fileRef = 8AF2AFD72016708000696E08 /* joypad-glass-north.png */; };
 		8AF2AFE12016708100696E08 /* joypad-glass.png in Resources */ = {isa = PBXBuildFile; fileRef = 8AF2AFD82016708000696E08 /* joypad-glass.png */; };
@@ -505,6 +508,13 @@
 		9900F296C32D2202367C693E /* gamedoctor_checkup.cc */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = gamedoctor_checkup.cc; path = ../gamedoctor_checkup.cc; sourceTree = "<group>"; };
 		8ADFFDF925DE791000FC4D3A /* perf.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = perf.h; path = ../perf.h; sourceTree = "<group>"; };
 		8ADFFDFA25DE791000FC4D3A /* perf.cc */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = perf.cc; path = ../perf.cc; sourceTree = "<group>"; };
+		5ADE1A0130F0C0DE00A1B001 /* shadedlight.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = shadedlight.h; path = ../shadedlight.h; sourceTree = "<group>"; };
+		5ADE1A0130F0C0DE00A1B002 /* shadedlight.cc */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = shadedlight.cc; path = ../shadedlight.cc; sourceTree = "<group>"; };
+		5ADE1A0130F0C0DE00A1C001 /* shadedgrid.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = shadedgrid.h; path = ../shadedgrid.h; sourceTree = "<group>"; };
+		5ADE1A0130F0C0DE00A1C002 /* shadedgrid.cc */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = shadedgrid.cc; path = ../shadedgrid.cc; sourceTree = "<group>"; };
+		5ADE1A0130F0C0DE00A1C004 /* shadedgrid_data.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = shadedgrid_data.h; path = ../shadedgrid_data.h; sourceTree = "<group>"; };
+		5ADE1A0130F0C0DE00A1D001 /* shadedweather.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = shadedweather.h; path = ../shadedweather.h; sourceTree = "<group>"; };
+		5ADE1A0130F0C0DE00A1D002 /* shadedweather.cc */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = shadedweather.cc; path = ../shadedweather.cc; sourceTree = "<group>"; };
 		8AE3D1093001610500BCB1FF /* scene_layer.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = scene_layer.h; path = ../scene_layer.h; sourceTree = SOURCE_ROOT; };
 		8AE8B9BC2E400B4F0094DF3C /* SDL3.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = SDL3.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		8AF2AFD62016707F00696E08 /* joypad-glass-southwest.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "joypad-glass-southwest.png"; sourceTree = "<group>"; };
@@ -1199,6 +1209,13 @@
 				9900F296C32D2202367C693E /* gamedoctor_checkup.cc */,
 				8ADFFDF925DE791000FC4D3A /* perf.h */,
 				8ADFFDFA25DE791000FC4D3A /* perf.cc */,
+				5ADE1A0130F0C0DE00A1B001 /* shadedlight.h */,
+				5ADE1A0130F0C0DE00A1B002 /* shadedlight.cc */,
+				5ADE1A0130F0C0DE00A1C001 /* shadedgrid.h */,
+				5ADE1A0130F0C0DE00A1C002 /* shadedgrid.cc */,
+				5ADE1A0130F0C0DE00A1C004 /* shadedgrid_data.h */,
+				5ADE1A0130F0C0DE00A1D001 /* shadedweather.h */,
+				5ADE1A0130F0C0DE00A1D002 /* shadedweather.cc */,
 				E700DC341A6E30A7006C8BE4 /* actions.cc */,
 				E700DC351A6E30A7006C8BE4 /* actions.h */,
 				E700DC361A6E30A7006C8BE4 /* actorio.cc */,
@@ -2096,6 +2113,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				8AEBA98E1475A21C0172E554 /* perf.cc in Sources */,
+				5ADE1A0130F0C0DE00A1B003 /* shadedlight.cc in Sources */,
+				5ADE1A0130F0C0DE00A1C003 /* shadedgrid.cc in Sources */,
+				5ADE1A0130F0C0DE00A1D003 /* shadedweather.cc in Sources */,
 				8AE5D3C21D2A0D9601379947 /* cheat_screen_actors.cc in Sources */,
 				AE063A4BE6FB17C98799B158 /* gamedoctor.cc in Sources */,
 				8986FC71BC6C61B631F8CDDF /* gamedoctor_checkup.cc in Sources */,

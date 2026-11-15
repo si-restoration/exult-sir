@@ -28,6 +28,7 @@
 #include "cheat.h"
 #include "game.h"
 #include "gamewin.h"
+#include "shadedlight.h"
 
 #include <iostream> /* Debugging. */
 
@@ -99,7 +100,8 @@ void Game_clock::set_time_palette(bool force) {
 	int        new_palette     = get_time_palette(hour + 1, new_dungeon != 0);
 	int        old_palette     = get_time_palette(hour, (dungeon != 255 ? dungeon : new_dungeon) != 0);
 	const bool cloudy          = overcast > 0;
-	const bool foggy           = fog > 0;
+	// With weather lighting, shaded light draws the fog itself.
+	const bool foggy           = fog > 0 && !Shaded_light::get().weather_wanted();
 	const bool weather_change  = force || (cloudy != was_overcast) || (foggy != was_foggy);
 	const bool light_sensitive = force || is_dark_palette(new_palette) || is_dark_palette(old_palette);
 	const bool light_change    = light_sensitive

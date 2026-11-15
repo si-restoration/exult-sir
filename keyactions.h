@@ -117,5 +117,6 @@ void ActionSoundTester(const int* params);
 void ActionTest(const int* params);
 
 void ActionToggleBBoxes(const int* params);
+void ActionShadedLightView(const int* params);
 void ActionPerfMetrics(const int* params);
 #endif

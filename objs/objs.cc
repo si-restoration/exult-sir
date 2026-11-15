@@ -46,6 +46,7 @@
 #include "objiter.h"
 #include "ordinfo.h"
 #include "ready.h"
+#include "shadedgrid.h"
 #include "ucmachine.h"
 #include "usefuns.h"
 #include "weaponinf.h"
@@ -574,6 +575,7 @@ void Game_object::change_frame(int frnum) {
 	const int old_brightness = get_info().get_object_light(get_framenum());
 
 	set_frame(frnum);
+	Shaded_grid_object_changed(this, true);
 
 	// Update light status if brightness changed across zero threshold
 	const int new_brightness = get_info().get_object_light(frnum);
