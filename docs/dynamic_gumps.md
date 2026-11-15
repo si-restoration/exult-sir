@@ -382,6 +382,7 @@ UI_set_gump_text_font(item, 31, 2);
 7. **Keyboard input** — `handle_kbd_event()` translates SDL key events and forwards `key_down()` to child widgets (sliders respond to arrow keys)
 8. **Mouse wheel dispatch** — `mousewheel_up/down()` forward wheel events to child widgets; `Gump_manager::handle_mouse_wheel()` prevents game-world cheat-scroll from firing through open gumps
 9. **Auto-repeat** — `update_gump()` calls `run()` on child widgets each frame, enabling slider arrow button auto-repeat (500ms initial, 50ms repeat)
+10. **A panel with no object area** — a `container_area` with a width or height of 0 (e.g. `:27/0/0/0/0`) still makes a dynamic gump, but one that holds no objects: `add()` refuses every drop that no source-0 list takes, so a dragged item goes back where it came from. Use it for UI panels such as the shop kit, whose container is only a host for the widgets.
 
 ### Class Hierarchy
 
@@ -645,7 +646,7 @@ A scrolling list of rows with a selection. Rows come from the gump's container (
 :200/1/20/30/123/8/12/2/0/-1/-1/-1/-1/-1/-1/3
 ```
 
-Full documentation: [dynamic_lists.md](dynamic_lists.md).
+Full documentation: [dynamic_lists.md](dynamic_lists.md). A ready-made shop built from these widgets ships for BG and SI mods: [shop_kit.md](shop_kit.md).
 
 ---
 
@@ -733,8 +734,9 @@ All configuration is stored in `gump_info.txt`, reusing the existing file and `R
 
 ### checkmark_pos
 ```
-:gump_shape/x/y/checkmark_shape
+:gump_shape/x/y/checkmark_shape[/tab]
 ```
+`tab` is optional (defaults to 0). In the original games the close checkmark sits on a coloured strip that is part of each container's art. For gump art with no strip of its own, `1` paints Exult's checkmark tab (`exult.flx` `checkmark_background`, the green tab on Exult's menus) centred behind the checkmark. It is painted before the gump's shape, so the gump's art covers any overlap and the tab seems to hang out from behind the frame. The tab counts as part of the gump: `Gump::has_point()` and `Gump::get_rect()` include it, so clicking it drags the gump, and only the checkmark itself closes it. Exult Studio keeps the field when it saves `gump_info.txt`. The tab is drawn by `Gump::paint()`, so gumps that override `paint()` without calling it get no tab.
 
 ### special
 ```
