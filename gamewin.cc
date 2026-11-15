@@ -60,6 +60,7 @@
 #include "fnames.h"
 #include "game.h"
 #include "gameclk.h"
+#include "gamedoctor.h"
 #include "gamemap.h"
 #include "gamerend.h"
 #include "items.h"
@@ -1469,6 +1470,7 @@ void Game_window::read() {
 	// before calling read_npcs!!
 	setup_game(cheat.in_map_editor());    // Read NPC's, usecode.
 	Mouse::mouse()->set_speed_cursor();
+	Game_doctor::get().on_game_restored();
 }
 
 /*

@@ -421,6 +421,13 @@ class Usecode_internal : public Usecode_machine {
 	USECODE_INTRINSIC_DECL(get_list_count, 2);
 	USECODE_INTRINSIC_DECL(get_list_object, 3);
 	USECODE_INTRINSIC_DECL(open_gump, 1);
+	USECODE_INTRINSIC_DECL(get_flag_number, 1);
+	USECODE_INTRINSIC_DECL(get_flag_by_name, 1);
+	USECODE_INTRINSIC_DECL(set_flag_by_name, 2);
+	USECODE_INTRINSIC_DECL(doctor_find_npcs, 1);
+	USECODE_INTRINSIC_DECL(doctor_find_items, 1);
+	USECODE_INTRINSIC_DECL(doctor_dump, 1);
+	USECODE_INTRINSIC_DECL(doctor_checkup, 0);
 
 	/*
 	 *  Other private methods:
