@@ -441,7 +441,11 @@ void Combat_schedule::find_opponents() {
 				continue;
 			}
 			Actor* oppr = gwin->get_npc(oppressor);
-			assert(oppr != nullptr);
+			// get_npc() returns null only for an out-of-range oppressor
+			// number (bad save data): skip it instead of aborting.
+			if (oppr == nullptr) {
+				continue;
+			}
 			// Is actor being attacked by a party member?
 			if ((oppr->get_flag(Obj_flags::in_party) || oppr == avatar) && is_enemy(npc_align, oppr->get_effective_alignment())) {
 				opponents.push_back(actor->weak_from_this());
@@ -613,9 +617,10 @@ std::list<Game_object_weak>::iterator Combat_schedule::find_attacked_opponent() 
 			// or that are being attacked by us already
 			dist += 16;
 		} else {
+			// A null oppressor is an out-of-range number (bad save data);
+			// see find_opponents().
 			const Actor* oppr = gwin->get_npc(oppressor);
-			assert(oppr != nullptr);
-			if (oppr->get_effective_alignment() == npc_align && oppr->get_target() != opp.get()) {
+			if (oppr != nullptr && oppr->get_effective_alignment() == npc_align && oppr->get_target() != opp.get()) {
 				// Oppressor is not actually attacking NPC, so penalize it.
 				dist += 16;
 			}
