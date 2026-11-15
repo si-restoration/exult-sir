@@ -73,6 +73,13 @@ class Gump_manager : public Game_singletons {
 	unsigned chain_changes = 0;
 
 public:
+	// Test hook called once per frame of every do_modal_gump loop, before the
+	// gump runs (nullptr = none; set only by the themed menu test driver).
+	static inline void (*modal_frame_hook)(Modal_gump* gump) = nullptr;
+	// Set while a themed menu window is open: prompt_for_number asks in the
+	// menu style instead. Returns false if escaped; value is the number.
+	static inline bool (*themed_number_hook)(int minval, int maxval, int step, int defval, bool can_escape, int& value) = nullptr;
+
 	void add_gump(Gump* gump);    // Add a single gump to screen
 	// Show gump for obj
 	void add_gump(Game_object* obj, int shapenum, bool actorgump = false);
