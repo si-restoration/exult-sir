@@ -1100,6 +1100,7 @@ bool Gump_manager::handle_modal_gump_event(Modal_gump* gump, SDL_Event& event) {
 				}
 			}
 
+			gump->raw_key_event(event);
 			bool handled = gump->key_down(chr, keysym_unicode);
 			// we'll allow the gump to handle escape first
 			// before closing the gump
