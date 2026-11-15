@@ -1092,6 +1092,10 @@ public:
 	static const char* view_name(Shaded_view view);
 	// World position (tiles, lifts) of a recorded game pixel.
 	void world_position(int x, int y, float& wx, float& wy, float& wz) const;
+	// Read the sliders and the shadow settings again from exult.cfg (after
+	// the Options window wrote them). The on/off option and the thread
+	// count keep their startup values.
+	void reload_sliders();
 
 	const Shaded_light_params& get_params() const {
 		return params;
@@ -1321,6 +1325,7 @@ private:
 	Shaded_backend     backend();
 	bool               setup_buffers(Image_window8& win);
 	void               read_config();
+	void               read_sliders();
 	void               run_debug_hooks();
 	void               load_table();
 	Shaded_volume      volume_for(const Game_object& obj) const;

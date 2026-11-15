@@ -2218,8 +2218,23 @@ void Shaded_light::read_config() {
 	bool              old_enabled;    // Stage 1 form: config/video/shaded_light = yes.
 	config->value(base + "enabled", enabled, false);
 	config->value("config/video/shaded_light", old_enabled, false);
-	lighting_on  = enabled || old_enabled;
-	auto percent = [&](const char* key, int def) {
+	lighting_on = enabled || old_enabled;
+	int threads;
+	config->value(base + "threads", threads, 0);
+	params.threads = std::max(threads, 0);    // 0 = auto, resolved later.
+	read_sliders();
+}
+
+/*
+ *  The sliders and shadow settings of config/video/shaded_light/...
+ */
+
+void Shaded_light::read_sliders() {
+	if (!config) {
+		return;
+	}
+	const std::string base    = "config/video/shaded_light/";
+	auto              percent = [&](const char* key, int def) {
 		int value;
 		config->value(base + key, value, def);
 		return static_cast<float>(std::max(value, 0)) / 100.0f;
@@ -2232,9 +2247,6 @@ void Shaded_light::read_config() {
 	bool dither;
 	config->value(base + "dither", dither, true);
 	params.dither = dither ? 1 : 0;
-	int threads;
-	config->value(base + "threads", threads, 0);
-	params.threads = std::max(threads, 0);    // 0 = auto, resolved later.
 	bool shadows;
 	config->value(base + "shadows", shadows, true);
 	params.shadows         = shadows ? 1 : 0;
@@ -2278,6 +2290,22 @@ void Shaded_light::read_config() {
 	bool precipitation;
 	config->value(base + "weather/precipitation", precipitation, true);
 	params.precipitation = precipitation ? 1 : 0;
+}
+
+void Shaded_light::reload_sliders() {
+	read_sliders();
+	if (!lighting_on) {
+		return;
+	}
+	// A new ambient slider needs the remap built again, which happens when
+	// the palette is shown; the other sliders force a full paint through
+	// lit_sliders.
+	Game_window* gwin = Game_window::get_instance();
+	Palette*     pal  = gwin->get_pal();
+	if (pal && !pal->is_faded_out()) {
+		pal->apply(false);
+	}
+	gwin->set_all_dirty();
 }
 
 /*
