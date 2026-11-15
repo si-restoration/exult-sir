@@ -549,6 +549,9 @@
 #		Lit lamp.
 #
 :526/-1/7
+#		Lamp post (street lamp).
+#
+:889/-1/5
 
 #		Fire sword.
 #
