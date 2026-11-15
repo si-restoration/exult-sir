@@ -67,6 +67,12 @@ public:
 		Apply       apply   = Apply::now;
 		Kind        kind    = Kind::choice;
 		bool        pending = false;    // Action edits state applied later.
+		// A setting with no classic gump (button -1): the choices with the
+		// exult.cfg value of each, and the value used when the key is
+		// missing. The row reads and writes its one key (keys) itself.
+		std::vector<std::string> config_labels;
+		std::vector<std::string> config_values;
+		std::string              config_default;
 		// A setting of the themed menus themselves, with no classic button:
 		// its config key and the config value of each choice.
 		std::string              native_key;
@@ -117,6 +123,7 @@ private:
 	std::unique_ptr<Modal_gump> gump;
 	std::vector<Row>            table;
 	std::map<std::string, int>  baseline;
+	std::map<std::string, int>  config_pending;    // Unapplied config rows.
 	std::map<std::string, int>  native_value;    // Choice of each native row.
 	bool                        touched = false;
 
@@ -129,6 +136,11 @@ private:
 	Gump_button*            button(int id) const;
 	std::string             signature() const;
 	static std::vector<Row> build_table(Tab t);
+	static bool             is_config_row(const Row& r) {
+		return !r.config_values.empty();
+	}
+	int  config_index(const Row& r) const;
+	bool apply_config_rows();
 };
 
 #endif

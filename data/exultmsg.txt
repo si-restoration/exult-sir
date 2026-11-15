@@ -1456,6 +1456,24 @@
 0xD29:Size of these menus; 100% is a comfortable part of the screen, whatever its width.
 0xD2A:Confirm
 0xD2B:How many?
+0xD95:Shaded light:
+0xD96:Light the night with height-aware light pools and shadows.
+0xD97:    Brightness:
+0xD98:How bright every light is.
+0xD99:    Light radius:
+0xD9A:How far every light reaches.
+0xD9B:    Ambient light:
+0xD9C:How bright the night is away from lights.
+0xD9D:    Light softness:
+0xD9E:Higher is softer: it takes more light to reach full brightness.
+0xD9F:    Shadows:
+0xDA0:Walls, people and furniture cast shadows from lights.
+0xDA1:    Shadow strength:
+0xDA2:How dark a full shadow is.
+0xDA3:    Shadow softness:
+0xDA4:How soft shadow edges are; 0% gives hard edges.
+0xDA5:    Night tint:
+0xDA6:Recolours the night away from lights. 0% is the game's own night colours, 50% neutral grey, 100% cool blue.
 # Troubleshooting (themed cheat window sections, GAME_DOCTOR key)
 0xD40:Named flags
 0xD41:NPC browser

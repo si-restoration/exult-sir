@@ -29,6 +29,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "GameEngineOptions_gump.h"
 #include "Gump_ToggleButton.h"
 #include "Gump_button.h"
+#include "Configuration.h"
 #include "InputOptions_gump.h"
 #include "Mui_router.h"
 #include "Mui_theme.h"
@@ -37,9 +38,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "gamewin.h"
 #include "ibuf8.h"
 #include "items.h"
+#include "shadedlight.h"
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 
 namespace {
 	// Classic toggle callbacks repaint their gump; while the model changes a
@@ -82,6 +85,20 @@ namespace {
 	bool is_indented(unsigned id) {
 		const std::string s = msg(id);
 		return !s.empty() && s[0] == ' ';
+	}
+
+	// The choice of a numeric config row nearest to n.
+	int config_index_near(const Mui_options_model::Row& r, long n) {
+		int  best      = 0;
+		long best_dist = -1;
+		for (size_t i = 0; i < r.config_values.size(); i++) {
+			const long d = std::labs(std::strtol(r.config_values[i].c_str(), nullptr, 10) - n);
+			if (best_dist < 0 || d < best_dist) {
+				best      = int(i);
+				best_dist = d;
+			}
+		}
+		return best;
 	}
 }    // namespace
 
@@ -196,7 +213,44 @@ std::vector<Mui_options_model::Row> Mui_options_model::build_table(Tab t) {
                 row("language", G::id_language, 0x5D3, 0xC6B, "config/gameplay/language"),
                 row("fonts", G::id_fonts, 0x5D8, 0xC6C, "config/gameplay/fonts"),
                 row("containers", G::id_container_view, 0x5DC, 0xD2C, "config/gameplay/container_view"),
-        };
+		};
+		// Shaded light has no classic screen: these rows keep their own
+		// config key. Only the on/off option waits for a restart; the
+		// others are read again when applied.
+		auto config_row = [&row](const char* id, unsigned label, unsigned help, const char* key, Apply apply,
+								 std::vector<std::string> labels, std::vector<std::string> values, const char* def) {
+			R r              = row(id, -1, label, help, key, apply);
+			r.config_labels  = std::move(labels);
+			r.config_values  = std::move(values);
+			r.config_default = def;
+			return r;
+		};
+		auto on_off = [&config_row](const char* id, unsigned label, unsigned help, const char* key, Apply apply,
+									const char* def) {
+			return config_row(
+					id, label, help, key, apply, {GumpStrings::Disabled(), GumpStrings::Enabled()}, {"no", "yes"}, def);
+		};
+		auto percent = [&config_row](const char* id, unsigned label, unsigned help, const char* key, int lo, int hi,
+									 int step, const char* def = "100") {
+			std::vector<std::string> labels;
+			std::vector<std::string> values;
+			for (int v = lo; v <= hi; v += step) {
+				labels.push_back(std::to_string(v) + "%");
+				values.push_back(std::to_string(v));
+			}
+			return config_row(id, label, help, key, Apply::now, std::move(labels), std::move(values), def);
+		};
+		rows.push_back(on_off("shaded_light", 0xD95, 0xD96, "config/video/shaded_light/enabled", Apply::restart, "no"));
+		rows.push_back(percent("shaded_brightness", 0xD97, 0xD98, "config/video/shaded_light/brightness", 0, 200, 10));
+		rows.push_back(percent("shaded_radius", 0xD99, 0xD9A, "config/video/shaded_light/radius", 50, 200, 10));
+		rows.push_back(percent("shaded_ambient", 0xD9B, 0xD9C, "config/video/shaded_light/ambient", 0, 200, 10));
+		rows.push_back(percent("shaded_softness", 0xD9D, 0xD9E, "config/video/shaded_light/softness", 10, 200, 10));
+		rows.push_back(on_off("shaded_shadows", 0xD9F, 0xDA0, "config/video/shaded_light/shadows", Apply::now, "yes"));
+		rows.push_back(
+				percent("shaded_shadow_strength", 0xDA1, 0xDA2, "config/video/shaded_light/shadow_strength", 0, 100, 10));
+		rows.push_back(
+				percent("shaded_shadow_softness", 0xDA3, 0xDA4, "config/video/shaded_light/shadow_softness", 0, 200, 10));
+		rows.push_back(percent("shaded_night_tint", 0xDA5, 0xDA6, "config/video/shaded_light/night_tint", 0, 100, 10, "0"));
 		break;
 	}
 	case Tab::input: {
@@ -395,8 +449,38 @@ Gump_button* Mui_options_model::button(int id) const {
 	}
 }
 
+
+/*
+ *  Index of the choice matching a config row's key (the nearest one for a
+ *  number that is not one of the choices).
+ */
+
+int Mui_options_model::config_index(const Row& r) const {
+	std::string v;
+	config->value(r.keys, v, r.config_default.c_str());
+	if (r.config_values.size() == 2 && r.config_values[0] == "no" && r.config_values[1] == "yes") {
+		bool b;
+		config->value(r.keys, b, r.config_default == "yes");
+		return b ? 1 : 0;
+	}
+	char*      end = nullptr;
+	const long n   = std::strtol(v.c_str(), &end, 10);
+	if (end == v.c_str()) {
+		const long d = std::strtol(r.config_default.c_str(), nullptr, 10);
+		return config_index_near(r, d);
+	}
+	return config_index_near(r, n);
+}
+
 void Mui_options_model::refresh() {
 	for (auto& r : table) {
+		if (is_config_row(r)) {
+			r.visible     = true;
+			r.choices     = r.config_labels;
+			const auto it = config_pending.find(r.id);
+			r.value       = it != config_pending.end() ? it->second : config_index(r);
+			continue;
+		}
 		if (!r.native_key.empty()) {
 			r.visible = true;
 			r.value   = native_value[r.id];
@@ -520,6 +604,11 @@ bool Mui_options_model::set_value(const std::string& id, int index) {
 	if (!r || r->kind != Kind::choice || index < 0 || index >= int(r->choices.size()) || index == r->value) {
 		return false;
 	}
+	if (is_config_row(*r)) {
+		config_pending[id] = index;
+		refresh();
+		return false;
+	}
 	if (!r->native_key.empty()) {
 		native_value[id] = index;
 		refresh();
@@ -563,7 +652,28 @@ void Mui_options_model::activate(const std::string& id) {
 	refresh();
 }
 
+
+/*
+ *  Write the changed config rows (the classic save_settings() below writes
+ *  exult.cfg back). Returns true if a shaded light key was written.
+ */
+
+bool Mui_options_model::apply_config_rows() {
+	bool shaded = false;
+	for (const auto& r : table) {
+		const auto it = config_pending.find(r.id);
+		if (!is_config_row(r) || it == config_pending.end() || !row_changed(r)) {
+			continue;
+		}
+		config->set(r.keys, r.config_values[size_t(it->second)], false);
+		shaded |= r.keys.rfind("config/video/shaded_light/", 0) == 0;
+	}
+	config_pending.clear();
+	return shaded;
+}
+
 void Mui_options_model::apply() {
+	const bool  shaded = apply_config_rows();
 	Modal_gump* g = gump.get();
 	switch (which) {
 	case Tab::video:
@@ -600,6 +710,9 @@ void Mui_options_model::apply() {
 	default:
 		break;
 	}
+	if (shaded) {
+		Shaded_light::get().reload_sliders();
+	}
 	Game_window::get_instance()->set_all_dirty();
 	refresh();
 	mark_baseline();
@@ -608,6 +721,7 @@ void Mui_options_model::apply() {
 void Mui_options_model::revert() {
 	// Destroy first: VideoOptions_gump restores the palette it forced.
 	gump.reset();
+	config_pending.clear();
 	create();
 	refresh();
 	touched = false;

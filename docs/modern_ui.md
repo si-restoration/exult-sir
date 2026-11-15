@@ -178,7 +178,7 @@ Why not FreeType now: Exult itself links neither FreeType nor SDL_ttf (FreeType 
 | Screen | Class | Notes |
 |---|---|---|
 | Game menu | `Mui_game_menu` | Return, Journey Log, Options, Cheats (when enabled), Quit (classic Yesno). |
-| Options | `Mui_options_window` | Tabs Video, Audio, Engine, Display, Input, UI, Advanced. Cross-tab search in the title bar; help line; badges; Reset page, Cancel, Apply. |
+| Options | `Mui_options_window` | Tabs Video, Audio, Engine, Display, Input, UI, Advanced. The Display tab ends with the shaded light settings (on/off, brightness, light radius, ambient light, light softness, shadows, shadow strength, shadow softness, night tint); they write `config/video/shaded_light/*` and apply at once, except the on/off option, which needs a restart. An edit of a `shaded_light` or `container_view` key on the Advanced tab also applies at once. Cross-tab search in the title bar; help line; badges; Reset page, Cancel, Apply. |
 | Key bindings | `Mui_keys_editor`, `Mui_keys_model` (end of the Input tab) | Every bindable action with its keys, grouped Game keys, Cheat keys, Map editor keys; rebind by pressing a key, conflict questions, From mod and Overridden by mod badges, Unbind, Reset, Reset all keys, filter. See Key Bindings below. |
 | Advanced | `Mui_config_editor` (inside Options) | exult.cfg tree with counts, filter, full paths, typed controls, Applies now / Needs restart, Changed from default, Reset to default, Not set rows, "Other" for unknown keys. |
 | Journey Log | `Mui_journey_window` | Cards or list, thumbnails, search, sort, details panel (saved at, in-game time, play time, party, game, mod, running build), New save, Save here, Load, Rename, Delete. |

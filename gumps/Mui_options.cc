@@ -21,10 +21,13 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #endif
 
 #include "Mui_options.h"
+#include "Configuration.h"
+#include "Gump_manager.h"
 
 #include "Mui_router.h"
 #include "gamewin.h"
 #include "items.h"
+#include "shadedlight.h"
 
 #include <algorithm>
 #include <cctype>
@@ -700,6 +703,14 @@ void Mui_options_window::apply_all() {
 		search.clear();
 		tab_index = advanced_tab;
 		last_tab  = advanced_tab;
+	}
+	if (editor_wrote) {
+		// Settings with no classic screen to apply them: the shaded light
+		// sliders and the container view.
+		Shaded_light::get().reload_sliders();
+		std::string view;
+		config->value("config/gameplay/container_view", view, "picture");
+		gumpman->set_container_list_view(view == "list");
 	}
 	if (display_applied || editor_wrote) {
 		// The display page reloads the game text (language, fonts): every
