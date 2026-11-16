@@ -1,10 +1,10 @@
 #	Exult shaded light table for Black Gate.
 #
 #	How each light source lights the world when the shaded light renderer
-#	(config/video/shaded_light/enabled) is on.  Rows only apply to objects
-#	the engine already treats as lights, that is shapes with a light_data
-#	row in shape_info.txt (or the light flag); a mod makes a new light
-#	source there, as before, and tunes it here.
+#	(config/video/shaded_light/enabled) is on.  Rows apply to objects the
+#	engine treats as lights, that is shapes with a light_data row in
+#	shape_info.txt (or the light flag), and to shapes with a row here but
+#	no light_data, which only shaded light then counts as lights.
 #
 #	A mod overrides rows with its own <PATCH>/shaded_light.txt, which only
 #	needs the rows it changes (same shape and frame replace a row here).
@@ -54,6 +54,9 @@
 :435/-1/8/100/255/214/170/-1/0
 #	Lit lamp.
 :526/-1/10/120/255/214/170/-1/0
+#	Lamp post (street lamp).  No light_data row, so only shaded light
+#	counts it; the classic palette does not.
+:889/-1/8/100/255/214/170/-1/0
 #	Fire sword.
 :551/-1/8/100/255/214/170/-1/0
 #	Firedoom staff.

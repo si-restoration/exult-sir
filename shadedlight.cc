@@ -41,6 +41,7 @@
 #include "ibuf8.h"
 #include "ignore_unused_variable_warning.h"
 #include "iwin8.h"
+#include "objiter.h"
 #include "palette.h"
 #include "ready.h"
 #include "shadedgrid.h"
@@ -2514,6 +2515,31 @@ void Shaded_light::gather_lights() {
 				Shaded_light_row         row;
 				const Shaded_light_entry entry = find_row(obj->get_shapenum(), frame, b, row);
 				if (!(entry.flags & shaded_light_off)) {
+					add_light(*obj, *obj, entry, row, false);
+				}
+			}
+			// Shapes the engine does not count as lights (no light_data) but
+			// that have a row here, as the Black Gate street lamp.  They stay
+			// out of the chunk light sets so the classic palette ignores them.
+			auto*           mutable_chunk = const_cast<Map_chunk*>(chunk);    // The accessors are not const.
+			Object_iterator next(mutable_chunk->get_objects());
+			Game_object*    obj;
+			while ((obj = next.get_next()) != nullptr) {
+				const Shape_info& info = obj->get_info();
+				if (info.has_light_info() || info.is_light_source() || obj->get_lift() >= skip_lift) {
+					continue;
+				}
+				const auto first = light_table.lower_bound(std::make_pair(obj->get_shapenum(), -1));
+				if (first == light_table.end() || first->first.first != obj->get_shapenum()) {
+					continue;
+				}
+				const bool in_dungeon = mutable_chunk->has_dungeon() && mutable_chunk->is_dungeon(obj->get_tx(), obj->get_ty());
+				if (in_dungeon != dungeon) {
+					continue;
+				}
+				Shaded_light_row         row;
+				const Shaded_light_entry entry = find_row(obj->get_shapenum(), obj->get_framenum(), 0, row);
+				if (row != Shaded_light_row::formula && !(entry.flags & shaded_light_off)) {
 					add_light(*obj, *obj, entry, row, false);
 				}
 			}
