@@ -99,6 +99,7 @@ public:
 	int      last_text_height;    // Height of last text painted.
 	string   cur_text;            // Current text being shown.
 	int      npc_num = -1;        // Speaker, or -1 for a shape-only face.
+	Game_object_weak speaker;     // Speaker (also one with no NPC number), for its name.
 
 	Npc_face_info(ShapeID& sid, int num) : shape(sid), face_num(num), text_pending(false), no_show_face(false), large_face(false) {}
 };
@@ -439,6 +440,7 @@ void Conversation::show_face(int shape, int frame, int slot, Actor* speaker) {
 			last_face_shown = i;
 			if (speaker) {
 				info->npc_num = speaker->get_npc_num();
+				info->speaker = weak_from_obj(speaker);
 			}
 			break;
 		}
@@ -450,6 +452,7 @@ void Conversation::show_face(int shape, int frame, int slot, Actor* speaker) {
 		}
 		info          = new Npc_face_info(face_sid, shape);
 		info->npc_num = speaker ? speaker->get_npc_num() : -1;
+		info->speaker = weak_from_obj(speaker);
 		if (noface) {
 			info->no_show_face = true;
 		}
@@ -1187,7 +1190,8 @@ void Conversation::sync_view() {
 		f.frame                 = finfo->shape.get_framenum();
 		f.drawable              = frm != nullptr && !finfo->no_show_face;
 		f.large                 = finfo->large_face;
-		Actor* npc              = finfo->npc_num >= 0 ? gwin->get_npc(finfo->npc_num) : nullptr;
+		const Game_object_shared spk = finfo->speaker.lock();
+		Actor*                   npc = spk ? spk->as_actor() : nullptr;
 		if (npc) {
 			f.name = npc == gwin->get_main_actor() ? npc->get_npc_name() : npc->get_name();
 		}

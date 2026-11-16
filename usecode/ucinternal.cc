@@ -719,6 +719,17 @@ void Usecode_internal::show_npc_face(
 	gwin->paint_dirty();
 	// Who speaks (for the themed view's name label).
 	Actor* speaker = npc;
+	if (arg1.is_int() && std::abs(arg1.get_int_value()) != 356 && arg1.get_int_value() != 0) {
+		// A face by number whose NPC slot is unused (or has no name): SI's
+		// add-on faces (Silver Seed, 296 and up) share their numbers with
+		// unused slots, all named "Trapper". The speaker is then the caller,
+		// if it is one of the add-on's people (an actor with no NPC number).
+		const Actor* owner = speaker ? speaker : gwin->get_npc(std::abs(arg1.get_int_value()));
+		if (!owner || owner->is_unused() || owner->get_npc_name_string().empty()) {
+			Actor* caller = this->frame->caller_item ? this->frame->caller_item->as_actor() : nullptr;
+			speaker       = caller && caller->get_npc_num() < 0 ? caller : nullptr;
+		}
+	}
 	if (!speaker && arg1.is_int() && (std::abs(arg1.get_int_value()) == 356 || arg1.get_int_value() == 0)) {
 		speaker = gwin->get_main_actor();
 	}
