@@ -2269,7 +2269,7 @@ void Shaded_light::read_sliders() {
 	params.night_tint = std::min(percent("night_tint", 0), 1.0f);
 	// Weather.
 	bool weather;
-	config->value(base + "weather/enabled", weather, true);
+	config->value(base + "weather/enabled", weather, false);
 	params.weather         = weather ? 1 : 0;
 	params.cloud_shadows   = std::min(percent("weather/cloud_shadows", 40), 1.0f);
 	params.overcast_soften = std::min(percent("weather/overcast_soften", 50), 1.0f);

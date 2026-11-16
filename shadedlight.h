@@ -174,7 +174,7 @@ struct alignas(16) Shaded_light_params {
 	// Weather (config/video/shaded_light/weather/...).  weather = 0 lights
 	// exactly as before it was added; weather_active is set per paint when
 	// the light pass has weather terms to apply.
-	int32_t weather           = 1;
+	int32_t weather           = 0;
 	int32_t lightning_shadows = 1;
 	int32_t precipitation     = 1;
 	int32_t weather_active    = 0;

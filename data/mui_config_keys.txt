@@ -114,7 +114,7 @@ config/video/shaded_light/shadow_softness|int|100|0..1000|now|Shaded light: soft
 config/video/shaded_light/night_tint|int|0|0..100|now|Shaded light: recolours the night away from lights. 0 is the game's own night colours, 50 neutral grey, 100 cool blue. Lamp and fire light stay warm.
 config/video/shaded_light/shadow_lights|int|4|1..16|now|Shaded light: how many lights per screen block are traced against people and objects on screen. The others only use the occlusion grid.
 config/video/shaded_light/shadow_resolution|int|2|1..4|now|Shaded light: block size in pixels of the on-screen shadow trace: 1, 2 or 4. Smaller is sharper and slower.
-config/video/shaded_light/weather/enabled|bool|yes||now|Shaded light: weather lighting (overcast, cloud shadows, fog, lightning and lit rain and snow).
+config/video/shaded_light/weather/enabled|bool|no||now|Shaded light: weather lighting (overcast, cloud shadows, fog, lightning and lit rain and snow). Off by default; turn it on here or with EXULT_SHADED_WEATHER=1.
 config/video/shaded_light/weather/cloud_softness|int|6|0..32|now|Shaded light: softness of cloud shadow edges, in tiles.
 config/video/shaded_light/weather/fog_height|int|4|1..16|now|Shaded light: height of the fog layer, in tiles.
 config/video/shaded_light/weather/fog_distance|int|6|1..64|now|Shaded light: distance in tiles over which fog hides the scene.
