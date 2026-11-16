@@ -116,6 +116,32 @@ namespace {
 
 	// Text for the history: '*' and '\r' dropped, '^x' upper-cases x, '@' is
 	// a quote, trimmed.
+	// Line breaks and tabs in a usecode string are layout left over in the
+	// original data (Shamino's "Documents signed by\r\n\t\t...the
+	// traitor!"); the body font draws them as glyphs. Each run of them,
+	// with the spaces around it, becomes one space.
+	std::string flatten_whitespace(const std::string& text) {
+		std::string out;
+		out.reserve(text.size());
+		for (size_t i = 0; i < text.size();) {
+			const char c = text[i];
+			if (c != '\r' && c != '\n' && c != '\t') {
+				out += c;
+				i++;
+				continue;
+			}
+			while (!out.empty() && out.back() == ' ') {
+				out.pop_back();
+			}
+			while (i < text.size() && (text[i] == '\r' || text[i] == '\n' || text[i] == '\t' || text[i] == ' ')) {
+				i++;
+			}
+			if (!out.empty() && i < text.size()) {
+				out += ' ';
+			}
+		}
+		return out;
+	}
 	std::string history_text(const std::string& text) {
 		std::string out;
 		for (size_t i = 0; i < text.size(); i++) {
@@ -453,8 +479,9 @@ void Mui_dialogue::show_page(const std::vector<std::string>& lines) {
 	paint();
 }
 
-void Mui_dialogue::say(const std::string& text, bool large) {
-	text_large       = large;
+void Mui_dialogue::say(const std::string& raw, bool large) {
+	const std::string text = flatten_whitespace(raw);
+	text_large             = large;
 	text_slot        = active >= 0 && active <= 1 ? active : -1;
 	text_shape       = text_slot >= 0 ? faces[size_t(text_slot)].shape : -1;
 	std::string said = history_text(text);
