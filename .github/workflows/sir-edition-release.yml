@@ -51,7 +51,11 @@ jobs:
       - name: Build (portable)
         # PORTABLE_EXULT_WIN32: exult.cfg and saves live beside Exult.exe, so
         # the edition never touches a stock Exult's settings in %LOCALAPPDATA%.
+        # The generated data headers first, on their own: Makefile.mingw does
+        # not list them as prerequisites of every object that includes them,
+        # so a parallel build can compile one before its header exists.
         run: |
+          make -j 4 -f Makefile.mingw gitinfo.h data/exult.flx data/exult_flx.h data/exult_bg.flx data/exult_bg_flx.h data/exult_si.flx data/exult_si_flx.h data/bg/bg_paperdol.vga data/bg/bg_paperdol_vga.h data/bg/bg_mr_faces.vga data/bg/bg_mr_faces_vga.h
           make -j 4 -f Makefile.mingw OPT_LEVEL="-O2 -DPORTABLE_EXULT_WIN32" U7PATH=pkg/ExultSIR install
       - name: Package
         run: |
