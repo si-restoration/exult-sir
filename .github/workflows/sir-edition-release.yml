@@ -5,8 +5,10 @@
 # rebuild the release from the tag's commit, which may be older.) It builds:
 #   ExultSIR-Windows-x64.zip  portable (config and saves beside Exult.exe)
 #   ExultSIR-macOS-AppleSilicon.zip  "Exult SIR Edition.app", ad-hoc signed
-# and attaches both to a DRAFT release, which a maintainer reviews and
-# publishes by hand. Nothing is published automatically.
+# and attaches each to the release named by the tag input (created as a
+# draft if it does not exist; an existing release gets its files
+# replaced). Nothing is published automatically. If a platform's job is
+# cancelled for want of a runner, re-run just that job.
 name: SIR Edition release
 
 on:
@@ -17,7 +19,7 @@ on:
         required: true
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: sir-edition-release-${{ github.ref }}
@@ -72,12 +74,23 @@ jobs:
           echo "Copy your Ultima VII Part Two: Serpent Isle files here (with The Silver Seed if you have it). Mods go in a folder named mods inside this one." > pkg/ExultSIR/serpentisle/PUT-SERPENT-ISLE-HERE.txt
           echo "Source code: https://github.com/si-restoration/exult-sir/tree/${GITHUB_SHA}" > pkg/ExultSIR/SOURCE.txt
           (cd pkg && zip -r ../ExultSIR-Windows-x64.zip ExultSIR)
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows
-          path: ExultSIR-Windows-x64.zip
-          if-no-files-found: error
+      - name: Attach to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          # Each platform attaches its own download, so one platform waiting
+          # for a runner never holds back the other. A new release starts as
+          # a draft; an existing one (draft or published) gets its files
+          # replaced.
+          if ! gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --prerelease \
+              --title "Exult SIR Edition $TAG" \
+              --notes "Builds of the sir-edition branch. See README-SIR-EDITION.md for setup." || true
+          fi
+          gh release upload "$TAG" ExultSIR-Windows-x64.zip --clobber -R "$GITHUB_REPOSITORY"
 
   macos:
     runs-on: macos-latest
@@ -126,35 +139,20 @@ jobs:
       - name: Smoke test (the bundled binary and its libraries load)
         run: |
           "Exult SIR Edition.app/Contents/MacOS/exult" --version
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos
-          path: ExultSIR-macOS-AppleSilicon.zip
-          if-no-files-found: error
-
-  release:
-    needs: [windows, macos]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download builds
-        uses: actions/download-artifact@v4
-        with:
-          path: out
-          merge-multiple: true
-      - name: Draft or update the release
+      - name: Attach to the release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.inputs.tag }}
         run: |
           set -euo pipefail
-          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release upload "$TAG" out/*.zip --clobber -R "$GITHUB_REPOSITORY"
-          else
-            gh release create "$TAG" out/*.zip -R "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" --draft --prerelease \
+          # Each platform attaches its own download, so one platform waiting
+          # for a runner never holds back the other. A new release starts as
+          # a draft; an existing one (draft or published) gets its files
+          # replaced.
+          if ! gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --prerelease \
               --title "Exult SIR Edition $TAG" \
-              --notes "Builds of the sir-edition branch at $GITHUB_SHA. See README-SIR-EDITION.md for setup."
+              --notes "Builds of the sir-edition branch. See README-SIR-EDITION.md for setup." || true
           fi
+          gh release upload "$TAG" ExultSIR-macOS-AppleSilicon.zip --clobber -R "$GITHUB_REPOSITORY"
