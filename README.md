@@ -1,72 +1,57 @@
-> **This is the Serpent Isle Restored Edition of Exult** (branch `sir-edition`): stock Exult plus a modern interface (themed menus and conversations), a key bindings editor, containers as a list, shaded light, Troubleshooting and fixes. Downloads are on the [releases page](https://github.com/si-restoration/exult-sir/releases); what it adds and how to set it up are in **[README-SIR-EDITION.md](README-SIR-EDITION.md)**. It is not an official Exult release; for stock Exult see [exult/exult](https://github.com/exult/exult).
+# Exult: Serpent Isle Restored Edition
 
-# Badges
+**Ultima VII, the way you remember it, with an interface from this century.**
 
+The Serpent Isle Restored Edition is a fork of [Exult](https://github.com/exult/exult), the engine that runs Ultima VII: The Black Gate and Ultima VII Part Two: Serpent Isle on modern computers. It plays both games, with Forge of Virtue and The Silver Seed, exactly as stock Exult does, and adds a modern interface, lighting and quality-of-life fixes. Everything new can be switched off: choose the Classic style and it looks and plays like Exult always has.
 
-[![Chat on IRC][irc-badge]][irc-url]
+### [⬇ Download for Windows or Mac](https://github.com/si-restoration/exult-sir/releases)
 
-[![License: GPL v2][gpl-badge]][gpl-url]
+Free and open source (GPL). You need your own copy of the games; the GOG *Ultima 7 Complete* works.
 
-[![CodeFactor Grade][codefactor-badge]][codefactor-url]
-[![CodeQL][codeql-badge]][codeql-url]
+---
 
-[![CI Android][android-badge]][android-url]
-[![CI FreeBSD][freebsd-badge]][freebsd-url]
-[![CI iOS][ios-badge]][ios-url]
-[![CI Mac OS X][macosx-badge]][macosx-url]
-[![CI OmniOS][omnios-badge]][omnios-url]
-[![CI Ubuntu][ubuntu-badge]][ubuntu-url]
-[![CI Windows MinGW][win-mingw-badge]][win-mingw-url]
-[![CI Windows MSVC][win-msvc-badge]][win-msvc-url]
+## What's new
 
-[![Coverity Scan Analysis][cov-analysis-badge]][cov-analysis-url]
-[![Coverity Scan Results][cov-results-badge]][cov-results-url]
+<p align="center"><img src="docs/images/sir-edition/options-search.png" width="720" alt="The themed Options window in the Ultima style, searching for shadow settings"></p>
 
-[![snapshots][snapshots-badge]][snapshots-url]
-[![Latest snapshot][snapshot-release-badge]][snapshots-release-url]
+**Readable conversations.** In the Ultima or Modern style, talking to someone opens a clear panel with both portraits, the speaker's name, larger text and proper answer buttons. Missed a line? Page Up scrolls back through everything said.
 
-## What is Exult?
+**Three looks.** Classic (exactly as before), Ultima (parchment and gold) or Modern, for the game menu, Options, the Journey Log, the cheat window and conversations. Options has a search box: type "music" and go straight to the setting.
 
-----
+<p align="center"><img src="docs/images/sir-edition/container-list.png" width="560" alt="A backpack shown as a sorted list beside the original bag"></p>
 
-Ultima VII an RPG from the early 1990's, still has a huge following. But, being a DOS game with a very nonstandard memory manager, it is difficult to run it on the latest computers. Exult is a project to create an Ultima VII game engine that runs on modern operating systems, capable of using the data and graphics files that come with the game.
+**Containers as a list** (optional). A tidy, scrollable list of what's in a bag, with quantities, weight and a preview, beside the original picture. Finding one key in a crowded pack takes seconds.
 
-Exult is written in C++ and runs on, at least, Linux, macOS and Windows using the SDL library to make porting to other platforms relatively easy. The current version supports all of "Ultima VII: The Black Gate" and "Ultima VII Part 2: Serpent Isle", allowing you to finish both games. This is only possible due to the work done by other fans who have decoded the various Ultima VII data files, especially Gary Thompson, Maxim Shatskih, Jakob Schonberg, and Wouter Dijkslag.
+**Key bindings editor.** Remap any key from the Input tab of Options. No text files.
 
-Exult aims to let those people who own Ultima VII (copyright 1993) play the game on modern hardware, in as close to (or perhaps even surpassing) its original splendor as is possible. You need to own "Ultima VII: The Black Gate" and/or "Ultima VII Part 2: Serpent Isle" and optionally the add-ons (not required to run) in order to use Exult, and we encourage you to buy a legal copy.
+<p align="center"><img src="docs/images/sir-edition/shaded-light.png" width="560" alt="Street lamps casting light and shadow at night"></p>
 
-For more information, either consult the README file on the repository, or view its HTML version [here](https://exult.info/docs.html).
+**Shaded light** (work in progress, optional). Torches, lamps, candles and spells cast pools of light and shadows, so night feels like night. Weather lighting is off by default and can be turned on in Advanced.
 
-[irc-badge]:            https://img.shields.io/badge/web.libera.chat-%23exult-blue?logo=LiveChat&logoColor=white
-[gpl-badge]:            https://img.shields.io/github/license/exult/exult?label=License&logo=GNU&logoColor=white
-[codefactor-badge]:     https://img.shields.io/codefactor/grade/github/exult/exult?label=codefactor&logo=codefactor&logoColor=white
-[codeql-badge]:         https://img.shields.io/github/actions/workflow/status/exult/exult/codeql.yml?label=CodeQL&logo=github&logoColor=white
-[android-badge]:        https://img.shields.io/github/actions/workflow/status/exult/exult/ci-android.yml?label=CI%20Android&logo=Android&logoColor=white
-[freebsd-badge]:        https://img.shields.io/github/actions/workflow/status/exult/exult/ci-freebsd.yml?label=CI%20FreeBSD&logo=freebsd&logoColor=white
-[ios-badge]:            https://img.shields.io/github/actions/workflow/status/exult/exult/ci-ios.yml?label=CI%20iOS&logo=iOS&logoColor=white
-[macosx-badge]:         https://img.shields.io/github/actions/workflow/status/exult/exult/ci-macos.yml?label=CI%20Mac%20OS%20X&logo=Apple&logoColor=white
-[ubuntu-badge]:         https://img.shields.io/github/actions/workflow/status/exult/exult/ci-linux.yml?label=CI%20Ubuntu&logo=Ubuntu&logoColor=white
-[win-mingw-badge]:      https://img.shields.io/github/actions/workflow/status/exult/exult/ci-windows.yml?label=CI%20Windows%2FMinGW&logo=Windows&logoColor=white
-[win-msvc-badge]:       https://img.shields.io/github/actions/workflow/status/exult/exult/ci-msvc.yml?label=CI%20Windows%2FMSVC&logo=Windows&logoColor=white
-[omnios-badge]:         https://img.shields.io/github/actions/workflow/status/exult/exult/ci-omnios.yml?label=CI%20OmniOS&logoColor=white&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIj48ZyBzdHlsZT0iZmlsbDojZmZmIj48cGF0aCBkPSJNMzE2LjcwOCA1MDcuOTIxYy0zNC40ODItNi4yODQtNTQuMzM1LTEzLjg0Ni03OC40NDMtMjkuODc4LTE0LjU1LTkuNjc2LTMyLjc0LTI2LjkxNy00Mi44NjYtNDAuNjMzLTIyLjI1My0zMC4xNC0zMy41MjQtNjcuODQxLTMxLjg1Ni0xMDYuNTU3IDEuOS00NC4xMDQgMTcuNzY3LTc5Ljk1MyA0OS4xODEtMTExLjEyIDI0LjktMjQuNzA0IDUzLjAyLTQwLjA0IDg4LjUzLTQ4LjI4MiAxNC44OC0zLjQ1NCA0Ny43OTctNC4zIDYzLjc5NS0xLjY0IDcwLjY2NyAxMS43NTIgMTI2LjI1OCA2MS42NSAxNDIuMzYgMTI3Ljc4IDUuOTUgMjQuNDM3IDYuMzUgNTEuMjggMS4xNDIgNzYuNTk4LTEzLjIwNiA2NC4xOTctNjUuMzU4IDExNS4yNjUtMTMzLjg4NCAxMzEuMTAxLTcuNzIzIDEuNzg1LTE1LjQ5IDIuNDQyLTMyLjU3NCAyLjc1Ni0xMi4zMzguMjI3LTIzLjc2Mi4xNzEtMjUuMzg1LS4xMjV6bTQ2LjYzNy03NS4wMTFjMTYuNTkyLTQuNTMzIDMyLjk2My0xNS4yODMgNDQuMzItMjkuMTAzIDYuOTM2LTguNDQyIDE1LjUzNC0yNS4yNyAxOC4xNTItMzUuNTMgNi42MzctMjYuMDEgNC4yNC01NC41MDEtNi40MTktNzYuMjgyLTE3LjkzLTM2LjYzOC01My4xMjgtNTUuOTktOTMuMDUzLTUxLjE2My00MS42NDggNS4wMzYtNzMuNTc5IDM3Ljg5My03OS4zOSA4MS42OTItMS43NzIgMTMuMzU1LS43MzggMzIuMjc2IDIuNDM3IDQ0LjYyIDguOTQzIDM0Ljc2NiAzNC42MjMgNTkuODg3IDY4LjQ5NyA2Ny4wMDIgMTAuMDQ3IDIuMTEgMzUuNzY1IDEuNDEgNDUuNDU2LTEuMjM2eiIgc3R5bGU9ImRpc3BsYXk6aW5saW5lO2ZpbGw6I2ZmZjtzdHJva2Utd2lkdGg6MS4xNzc0MyIgdHJhbnNmb3JtPSJtYXRyaXgoMS4wMDQgMCAwIDEuMDE1IC0yLjE0NCAtMy45MSkiLz48cGF0aCBkPSJNMTQzLjE0NyAzOTYuMzk5Yy0yNi4zNzEtOC43MDgtNTQuNTUtMjQuODIyLTc1Ljg2NC00My4zODZDMzYuMDQ4IDMyNS44MSAxNC4wOTkgMjg3Ljk4OCA0Ljc4NiAyNDUuMzJjLTIuMy0xMC41NC0yLjYzLTE1LjUzLTIuNjUtNDAuMjE0LS4wMi0yNS4wMTIuMjgtMjkuNTY3IDIuNjcyLTQwLjUxIDcuMTg1LTMyLjg3NiAxOS43MzUtNTkuMzIgMzkuOTUyLTg0LjE4NCAzMy4wODMtNDAuNjg2IDgwLjQ5Ny02Ny4xOCAxMzQuMzEzLTc1LjA0OCAxNy45NzItMi42MjggNTIuOTk3LTEuNzEgNjkuNDY3IDEuODIzIDI3Ljg3NiA1Ljk3NyA1OS41NiAxOS42NTQgODEuMDYxIDM0Ljk5MiAzMS4yNTQgMjIuMjk1IDU2Ljg2IDU0LjM2NiA3MC4yMjcgODcuOTU2IDQuMjQ2IDEwLjY2OSAxMC45NzMgMzQuMDYgMTAuMDQ3IDM0LjkzNS0uMjY2LjI1LTUuNzk2LTEuMzAyLTEyLjI5LTMuNDUtMjEuMzYyLTcuMDY5LTQ2LjYxMi0xMC43MjMtNjYuMjcyLTkuNTkxbC0xMC43NzkuNjItNC44ODQtOS44MDJjLTYuMzEyLTEyLjY2Ny0xNi4zODktMjYuMDUzLTI3LjM4Mi0zNi4zNzMtMjEuNTU1LTIwLjIzNS00NC4yOTEtMjkuNjUtNzQuNDYtMzAuODMzLTM4LjEyNS0xLjQ5Ni02Ni43NSA5LjYwNC05MS44NjggMzUuNjI0LTE1LjYwMiAxNi4xNjItMjUuNjg0IDMzLjc0NC0zMS4yODUgNTQuNTU2LTkuMzc0IDM0LjgzOC01LjgwMyA3My44MzggOS41MDYgMTAzLjgwNyA5LjAwNiAxNy42MyAyNC41NDggMzUuMjU0IDM5Ljc4MiA0NS4xMDhsNy45MjcgNS4xMjl2MTguNTMyYzAgMTkuNzEyIDIuNDUgMzguMDY3IDcuMDQ4IDUyLjgxNyAyLjY0MSA4LjQ3MiAyLjc5NSA5LjQyIDEuNTEyIDkuMzM2LS40ODctLjAzMi02LjQ2NC0xLjktMTMuMjgzLTQuMTUxem0xMzMuMTc0LTcuMjIzYy00LjY0MS02Ljk3NS04Ljc0MS0xNS41MDQtMTAuODczLTIyLjYyLTIuNjc0LTguOTIxLTQuMjkzLTI1LjkyNS0zLjQzMy0zNi4wNWwuNzE4LTguNDU1IDcuNzM1LTQuNDZjMTYuNjM2LTkuNTkzIDM3LjM2MS0zMy4wMjEgNDYuNjk3LTUyLjc4NyAzLjk2OS04LjQwMyA0LjUzMi04LjYzIDIxLjIzOC04LjYwNCAxMi43NjguMDIgMjMuMDIgMi4yMSAzMi4zOTkgNi45MTkgOC4xODUgNC4xMDkgMTguNTUgMTIuMjk3IDIzLjEzNyAxOC4yNzdsMy4zMjYgNC4zMzctMi4xODMgNC44OTJjLTE3LjU1IDM5LjM0LTU0LjQ2MiA3NS41MjgtOTcuOTI5IDk2LjAxLTE2LjkyNyA3Ljk3Ni0xNy4xOTQgOC4wMDktMjAuODMyIDIuNTQxeiIgc3R5bGU9ImRpc3BsYXk6aW5saW5lO2ZpbGw6I2ZmZjtzdHJva2Utd2lkdGg6MS4xNzc0MyIgdHJhbnNmb3JtPSJtYXRyaXgoMS4wMDQgMCAwIDEuMDE1IC0yLjE0NCAtMy45MSkiLz48L2c+PC9zdmc+
-[cov-analysis-badge]:   https://img.shields.io/github/actions/workflow/status/exult/exult/coverity-scan.yml?label=Coverity%20Scan%20Analysis&logoColor=white&logo=data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgMjU2IDI1MiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMjYuOTUgMTA5LjA4bC0zLjUyLTkuNDUgMzcuOTYgNzAuODloLjg1bDQ3LjMzLTExOC4xM2MuODMtMi41NiA4LjI2LTIxLjc0IDguNTEtMzAuMi42My0yMS44NC0xNC4xLTIzLjgxLTI5Ljc3LTE5LjM5QzM2Ljg3IDE5LjQ2LS4yNCA2Ny44My4wMSAxMjQuNzhjLjIgNTIuOTcgMzIuNjQgOTguMjQgNzguNjUgMTE3LjM4TDI2Ljk1IDEwOS4wOE0xNzQuMzMgNS40OGMtNi4zMiAxMi43LTEzLjEgMjYuMzctMjEuNjggNDguMDhMNzkuMjIgMjQyLjM5YzE1LjA5IDYuMiAzMS42MyA5LjYgNDguOTYgOS41MiA3MC41LS4yNyAxMjcuNDItNTcuNjcgMTI3LjEzLTEyOC4xOC0uMjItNTMuODMtMzMuNzYtOTkuNy04MC45OC0xMTguMjYiIGZpbGw9IiNmZmYiLz48L3N2Zz4=
-[cov-results-badge]:    https://img.shields.io/coverity/scan/10872?label=Coverity%20Scan%20Results&logoColor=white&logo=data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgMjU2IDI1MiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMjYuOTUgMTA5LjA4bC0zLjUyLTkuNDUgMzcuOTYgNzAuODloLjg1bDQ3LjMzLTExOC4xM2MuODMtMi41NiA4LjI2LTIxLjc0IDguNTEtMzAuMi42My0yMS44NC0xNC4xLTIzLjgxLTI5Ljc3LTE5LjM5QzM2Ljg3IDE5LjQ2LS4yNCA2Ny44My4wMSAxMjQuNzhjLjIgNTIuOTcgMzIuNjQgOTguMjQgNzguNjUgMTE3LjM4TDI2Ljk1IDEwOS4wOE0xNzQuMzMgNS40OGMtNi4zMiAxMi43LTEzLjEgMjYuMzctMjEuNjggNDguMDhMNzkuMjIgMjQyLjM5YzE1LjA5IDYuMiAzMS42MyA5LjYgNDguOTYgOS41MiA3MC41LS4yNyAxMjcuNDItNTcuNjcgMTI3LjEzLTEyOC4xOC0uMjItNTMuODMtMzMuNzYtOTkuNy04MC45OC0xMTguMjYiIGZpbGw9IiNmZmYiLz48L3N2Zz4=
-[snapshots-badge]:      https://github.com/exult/exult/actions/workflows/snapshots.yml/badge.svg
-[snapshot-release-badge]:  https://img.shields.io/github/release-date-pre/exult/exult?display_date=published_at&label=Latest%20snapshot%20for%20Windows%20and%20Android
+**Troubleshooting** (with cheats on). Find a lost item anywhere you have been, browse NPCs and flags, and check a game for stuck quest states.
 
-[irc-url]:              https://web.libera.chat/#exult
-[gpl-url]:              https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
-[codefactor-url]:       https://www.codefactor.io/repository/github/exult/exult
-[codeql-url]:           https://github.com/exult/exult/actions/workflows/codeql.yml
-[android-url]:          https://github.com/exult/exult/actions/workflows/ci-android.yml
-[freebsd-url]:          https://github.com/exult/exult/actions/workflows/ci-freebsd.yml
-[ios-url]:              https://github.com/exult/exult/actions/workflows/ci-ios.yml
-[macosx-url]:           https://github.com/exult/exult/actions/workflows/ci-macos.yml
-[omnios-url]:           https://github.com/exult/exult/actions/workflows/ci-omnios.yml
-[ubuntu-url]:           https://github.com/exult/exult/actions/workflows/ci-linux.yml
-[win-mingw-url]:        https://github.com/exult/exult/actions/workflows/ci-windows.yml
-[win-msvc-url]:         https://github.com/exult/exult/actions/workflows/ci-msvc.yml
-[cov-analysis-url]:     https://github.com/exult/exult/actions/workflows/coverity-scan.yml
-[cov-results-url]:      https://scan.coverity.com/projects/exult-exult
-[snapshots-url]:        https://github.com/exult/exult/actions/workflows/snapshots.yml
-[snapshots-release-url]:    https://github.com/exult/exult/releases?q=prerelease%3Atrue
+**Fixes.** Weather is saved with your game, play time is recorded in saves, and several crashes are fixed.
+
+## Get started
+
+1. **Download** the zip for your system from the [releases page](https://github.com/si-restoration/exult-sir/releases).
+2. **Windows:** unzip it into Documents (not Program Files), copy Black Gate into its `blackgate` folder and Serpent Isle into `serpentisle`, and run `Exult.exe`. It's portable: settings and saves stay in that folder.
+3. **Mac (Apple Silicon):** drag *Exult SIR Edition* to Applications and put your games in `/Library/Application Support/Exult/blackgate` and `.../serpentisle`. The first time, allow it in System Settings → Privacy & Security → Open Anyway.
+4. **In the game,** press Esc and click **Menu style: Classic** to switch to Ultima or Modern.
+
+Full setup, sound and music, and mods: **[README-SIR-EDITION.md](README-SIR-EDITION.md)**.
+
+## Serpent Isle Restored
+
+This edition is the companion to **Serpent Isle Restored**, a fan restoration of Serpent Isle's cut and unfinished story, currently in private testing. The mod also runs on stock Exult 1.12.1; the edition is the nicer way to play it.
+
+## About this fork
+
+- It tracks Exult's `master` and keeps its changes on the `sir-edition` branch. The changes are offered to the Exult project as pull requests; this edition exists so players can use them now. **It is not an official Exult release**; for stock Exult, see [exult/exult](https://github.com/exult/exult) and [exult.info](https://exult.info).
+- Built for Windows (64-bit) and macOS (Apple Silicon). Linux, Steam Deck and iPad builds are not made yet.
+- Bugs and ideas: [open an issue](https://github.com/si-restoration/exult-sir/issues).
+- Building from source: Exult's own instructions apply ([INSTALL](INSTALL), [README.windows](README.windows), [README.macOS](README.macOS)); the release workflow is `.github/workflows/sir-edition-release.yml`.
+
+## Credits and licence
+
+Exult is by the Exult team (see [AUTHORS](AUTHORS)), and this edition is built on their work. Edition changes by Fuku Dragon. GPL version 2 or later, like Exult. Ultima is a trademark of Electronic Arts; this project is not affiliated with or endorsed by Electronic Arts or Origin Systems, and no game files are included.

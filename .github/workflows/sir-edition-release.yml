@@ -62,6 +62,8 @@ jobs:
           make -j 4 -f Makefile.mingw OPT_LEVEL="-O2 -DPORTABLE_EXULT_WIN32" U7PATH=pkg/ExultSIR install
       - name: Package
         run: |
+          # Exult's own MIDI sound effects, so sound effects work out of the box.
+          cp data/midisfx.flx pkg/ExultSIR/data/
           cp COPYING pkg/ExultSIR/COPYING.txt
           cp AUTHORS pkg/ExultSIR/AUTHORS.txt
           cp README-SIR-EDITION.md pkg/ExultSIR/README-SIR-EDITION.txt
@@ -111,6 +113,7 @@ jobs:
             || /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Exult SIR Edition" "$APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier io.github.si-restoration.exult-sir" "$APP/Contents/Info.plist"
           cp README-SIR-EDITION.md "$APP/Contents/Documents/"
+          cp data/midisfx.flx "$APP/Contents/Resources/data/"
           # dylibbundler rewrote the binary and libraries: Apple Silicon
           # refuses to run them unsigned, so sign ad hoc (no Apple ID).
           codesign --force --sign - "$APP"/Contents/Resources/lib/*.dylib

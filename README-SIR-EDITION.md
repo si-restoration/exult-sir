@@ -40,6 +40,12 @@ The app shares its settings (`~/Library/Preferences/exult.cfg`) and saves with a
 
 Not built yet. The Serpent Isle Restored mod works on stock Exult 1.12.1.
 
+### Sound and music
+
+- **Sound effects** work out of the box: the download includes Exult's MIDI sound effects (`midisfx.flx`).
+- **Better sound effects and the digital soundtrack** (recordings of the original music) come from Exult's audio packs on the [Exult download page](https://exult.sourceforge.io/download.html). Put the `.flx` sound files and the `music` folder in the `data` folder beside `Exult.exe` (Windows) or in `/Library/Application Support/Exult/data` (Mac), then turn on Sound effects and Digital music in Audio options.
+- For MIDI music, MT-32 emulation is the most faithful (Ultima VII was written for the Roland MT-32) but needs MT-32 ROM files you supply yourself; FluidSynth with a good General MIDI soundfont is the next best.
+
 ### In the game
 
 - Press **Esc** for the game menu. The line **Menu style: Classic** cycles to Ultima and Modern; conversations follow the menu style.
