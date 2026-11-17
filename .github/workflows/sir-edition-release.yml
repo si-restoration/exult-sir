@@ -1,0 +1,152 @@
+# Serpent Isle Restored Edition: build the Windows and macOS downloads.
+#
+# Run it from the Actions tab (Run workflow), or push a tag named sir-v*.
+# Either way it builds:
+#   ExultSIR-Windows-x64.zip  portable (config and saves beside Exult.exe)
+#   ExultSIR-macOS-AppleSilicon.zip  "Exult SIR Edition.app", ad-hoc signed
+# and attaches both to a DRAFT release, which a maintainer reviews and
+# publishes by hand. Nothing is published automatically.
+name: SIR Edition release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create or update (e.g. sir-v0.9.0-beta.1)"
+        required: true
+  push:
+    tags:
+      - "sir-v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sir-edition-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Install dependencies
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          release: true
+          install: |
+            base-devel git zip
+            mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-binutils mingw-w64-ucrt-x86_64-ntldd
+            mingw-w64-ucrt-x86_64-sdl3 mingw-w64-ucrt-x86_64-sdl3-image
+            mingw-w64-ucrt-x86_64-fluidsynth mingw-w64-ucrt-x86_64-libtimidity
+            mingw-w64-ucrt-x86_64-libogg mingw-w64-ucrt-x86_64-libvorbis
+            mingw-w64-ucrt-x86_64-munt-mt32emu mingw-w64-ucrt-x86_64-libpng
+            mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-freetype mingw-w64-ucrt-x86_64-icu
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Build (portable)
+        # PORTABLE_EXULT_WIN32: exult.cfg and saves live beside Exult.exe, so
+        # the edition never touches a stock Exult's settings in %LOCALAPPDATA%.
+        run: |
+          make -j 4 -f Makefile.mingw OPT_LEVEL="-O2 -DPORTABLE_EXULT_WIN32" U7PATH=pkg/ExultSIR install
+      - name: Package
+        run: |
+          cp COPYING pkg/ExultSIR/COPYING.txt
+          cp AUTHORS pkg/ExultSIR/AUTHORS.txt
+          cp README-SIR-EDITION.md pkg/ExultSIR/README-SIR-EDITION.txt
+          cp data/bg/defaultkeys.txt pkg/ExultSIR/bgdefaultkeys.txt
+          cp data/si/defaultkeys.txt pkg/ExultSIR/sidefaultkeys.txt
+          mkdir -p pkg/ExultSIR/blackgate pkg/ExultSIR/serpentisle
+          echo "Copy your Ultima VII: The Black Gate files here (with Forge of Virtue if you have it)." > pkg/ExultSIR/blackgate/PUT-BLACK-GATE-HERE.txt
+          echo "Copy your Ultima VII Part Two: Serpent Isle files here (with The Silver Seed if you have it). Mods go in a folder named mods inside this one." > pkg/ExultSIR/serpentisle/PUT-SERPENT-ISLE-HERE.txt
+          echo "Source code: https://github.com/si-restoration/exult-sir/tree/${GITHUB_SHA}" > pkg/ExultSIR/SOURCE.txt
+          (cd pkg && zip -r ../ExultSIR-Windows-x64.zip ExultSIR)
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: ExultSIR-Windows-x64.zip
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install automake libtool pkg-config libpng zlib libogg libvorbis fluid-synth freetype bison flex
+          brew install sdl3 sdl3_image icu4c mt32emu autoconf-archive dylibbundler
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Configure
+        run: |
+          autoreconf -v -i
+          export LDFLAGS="-L$(brew --prefix bison)/lib -L$(brew --prefix flex)/lib -L$(brew --prefix zlib)/lib"
+          export CPPFLAGS="-I$(brew --prefix flex)/include -I$(brew --prefix zlib)/include"
+          export PATH="$(brew --prefix bison)/bin:$(brew --prefix flex)/bin:$PATH"
+          export PKG_CONFIG_PATH="$(brew --prefix zlib)/lib/pkgconfig:$(brew --prefix icu4c)/lib/pkgconfig"
+          ./configure --disable-alsa --disable-timidity-midi
+      - name: Build the app bundle
+        run: |
+          export PATH="$(brew --prefix bison)/bin:$(brew --prefix flex)/bin:$PATH"
+          make -j 3
+          make bundle_shared
+      - name: Name, sign (ad hoc) and package
+        run: |
+          APP="Exult SIR Edition.app"
+          mv Exult.app "$APP"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleName Exult SIR Edition" "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Exult SIR Edition" "$APP/Contents/Info.plist" \
+            || /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Exult SIR Edition" "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier io.github.si-restoration.exult-sir" "$APP/Contents/Info.plist"
+          cp README-SIR-EDITION.md "$APP/Contents/Documents/"
+          # dylibbundler rewrote the binary and libraries: Apple Silicon
+          # refuses to run them unsigned, so sign ad hoc (no Apple ID).
+          codesign --force --sign - "$APP"/Contents/Resources/lib/*.dylib
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict "$APP"
+          mkdir -p dist
+          cp README-SIR-EDITION.md dist/README-SIR-EDITION.txt
+          cp COPYING dist/COPYING.txt
+          echo "Source code: https://github.com/si-restoration/exult-sir/tree/${GITHUB_SHA}" > dist/SOURCE.txt
+          ditto "$APP" "dist/$APP"
+          (cd dist && ditto -c -k --sequesterRsrc . ../ExultSIR-macOS-AppleSilicon.zip)
+      - name: Smoke test (the bundled binary and its libraries load)
+        run: |
+          "Exult SIR Edition.app/Contents/MacOS/exult" --version
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: ExultSIR-macOS-AppleSilicon.zip
+          if-no-files-found: error
+
+  release:
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download builds
+        uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Draft or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" out/*.zip --clobber -R "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" out/*.zip -R "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --draft --prerelease \
+              --title "Exult SIR Edition $TAG" \
+              --notes "Builds of the sir-edition branch at $GITHUB_SHA. See README-SIR-EDITION.md for setup."
+          fi

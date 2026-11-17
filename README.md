@@ -1,3 +1,5 @@
+> **This is the Serpent Isle Restored Edition of Exult** (branch `sir-edition`): stock Exult plus a modern interface (themed menus and conversations), a key bindings editor, containers as a list, shaded light, Troubleshooting and fixes. Downloads are on the [releases page](https://github.com/si-restoration/exult-sir/releases); what it adds and how to set it up are in **[README-SIR-EDITION.md](README-SIR-EDITION.md)**. It is not an official Exult release; for stock Exult see [exult/exult](https://github.com/exult/exult).
+
 # Badges
 
 
