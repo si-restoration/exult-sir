@@ -41,6 +41,7 @@ jobs:
           install: |
             base-devel git zip
             mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-binutils mingw-w64-ucrt-x86_64-ntldd
+            mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-sdl3 mingw-w64-ucrt-x86_64-sdl3-image
             mingw-w64-ucrt-x86_64-fluidsynth mingw-w64-ucrt-x86_64-libtimidity
             mingw-w64-ucrt-x86_64-libogg mingw-w64-ucrt-x86_64-libvorbis
