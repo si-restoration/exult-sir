@@ -1,7 +1,8 @@
 # Serpent Isle Restored Edition: build the Windows and macOS downloads.
 #
-# Run it from the Actions tab (Run workflow), or push a tag named sir-v*.
-# Either way it builds:
+# Run it from the Actions tab (Run workflow) or with gh workflow run. (No
+# tag trigger: publishing a draft creates its tag, and a tag build would
+# rebuild the release from the tag's commit, which may be older.) It builds:
 #   ExultSIR-Windows-x64.zip  portable (config and saves beside Exult.exe)
 #   ExultSIR-macOS-AppleSilicon.zip  "Exult SIR Edition.app", ad-hoc signed
 # and attaches both to a DRAFT release, which a maintainer reviews and
@@ -14,9 +15,6 @@ on:
       tag:
         description: "Release tag to create or update (e.g. sir-v0.9.0-beta.1)"
         required: true
-  push:
-    tags:
-      - "sir-v*"
 
 permissions:
   contents: read
@@ -149,7 +147,7 @@ jobs:
       - name: Draft or update the release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TAG: ${{ github.event.inputs.tag }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
