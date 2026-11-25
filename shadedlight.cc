@@ -62,6 +62,7 @@
 #include <iterator>
 #include <limits>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <thread>
 
@@ -2761,10 +2762,10 @@ void Shaded_light::widen_paint(int& x, int& y, int& w, int& h) {
 	// rounding of the trace samples.
 	const int margin = 3 * params.shadow_resolution + 2;
 	auto      reach  = [margin](float light, int lo, int hi, int rlo, int rhi, int& o0, int& o1) {
-        const int a = light < static_cast<float>(lo) ? lo : rlo;
-        const int b = light >= static_cast<float>(hi) ? hi : rhi;
-        o0          = std::min(o0, std::max(a, rlo) - margin);
-        o1          = std::max(o1, std::min(b, rhi) + margin);
+		const int a = light < static_cast<float>(lo) ? lo : rlo;
+		const int b = light >= static_cast<float>(hi) ? hi : rhi;
+		o0          = std::min(o0, std::max(a, rlo) - margin);
+		o1          = std::max(o1, std::min(b, rhi) + margin);
 	};
 	for (const Shaded_light_record& l : lights) {
 		const Shaded_rect lr = Shaded_cpu::light_screen_rect(at, l, gw, gh);
@@ -3337,8 +3338,12 @@ bool Shaded_light::setup_buffers(Image_window8& win) {
 		buffers.object_flags.clear();
 		object_extents.clear();
 		object_index.clear();
+		object_owners.clear();
+		object_keys.clear();
+		object_key_stale.clear();
 		main_actor_id         = shaded_id_none;
 		need_full             = true;    // Nothing recorded outside this clip.
+		record_dirty_all      = true;
 		params.buffer_width   = buffers.width;
 		params.buffer_height  = buffers.height;
 		params.buffer_stride  = buffers.stride;
@@ -3366,6 +3371,17 @@ void Shaded_light::begin_paint(Image_window8& win, bool full) {
 	int            cx, cy, cw, ch;
 	ib->get_clip(cx, cy, cw, ch);
 	clip = Intersect(Shaded_rect{cx, cy, cw, ch}, buffers.bounds());
+	// The record under the clip is painted again.
+	if (record_dirty.w <= 0 || record_dirty.h <= 0) {
+		record_dirty = clip;
+	} else if (clip.w > 0 && clip.h > 0) {
+		const int x1 = std::max(record_dirty.x + record_dirty.w, clip.x + clip.w);
+		const int y1 = std::max(record_dirty.y + record_dirty.h, clip.y + clip.h);
+		record_dirty.x = std::min(record_dirty.x, clip.x);
+		record_dirty.y = std::min(record_dirty.y, clip.y);
+		record_dirty.w = x1 - record_dirty.x;
+		record_dirty.h = y1 - record_dirty.y;
+	}
 	if (full) {
 		buffers.objects.clear();
 		buffers.object_opacity.clear();
@@ -3373,6 +3389,9 @@ void Shaded_light::begin_paint(Image_window8& win, bool full) {
 		buffers.object_flags.clear();
 		object_extents.clear();
 		object_index.clear();
+		object_owners.clear();
+		object_keys.clear();
+		object_key_stale.clear();
 		main_actor_id = shaded_id_none;
 		need_full     = false;
 	} else if (gwin->get_scrolltx() != params.scroll_tx || gwin->get_scrollty() != params.scroll_ty) {
@@ -3415,6 +3434,7 @@ void Shaded_light::begin_paint(Image_window8& win, bool full) {
 
 void Shaded_light::shift(int dx, int dy) {
 	const Shaded_rect area = buffers.bounds();
+	record_dirty_all       = true;
 	if (std::abs(dx) >= area.w || std::abs(dy) >= area.h) {
 		Shaded_cpu::clear_rect(buffers, area);
 		return;
@@ -3584,6 +3604,103 @@ void Shaded_light::run_bands(int bands, const std::function<void(int)>& job) {
 }
 
 /*
+ *  Hash the record blocks under the paints since the last update (all of
+ *  them after a scroll, a new buffer or a new game area size).
+ */
+
+void Shaded_light::update_record_blocks(int gw, int gh, bool threaded) {
+	const int cols = (gw + shaded_record_block - 1) / shaded_record_block;
+	const int rows = (gh + shaded_record_block - 1) / shaded_record_block;
+	if (gw != record_blocks_w || gh != record_blocks_h) {
+		record_blocks.assign(static_cast<size_t>(cols) * rows, 0);
+		record_blocks_w  = gw;
+		record_blocks_h  = gh;
+		record_dirty_all = true;
+	}
+	Shaded_rect dirty = record_dirty_all ? Shaded_rect{0, 0, gw, gh} : Intersect(record_dirty, Shaded_rect{0, 0, gw, gh});
+	record_dirty      = Shaded_rect{};
+	record_dirty_all  = false;
+	if (dirty.w <= 0 || dirty.h <= 0) {
+		return;
+	}
+	// The objects by what the traces read of them, not by their ids, which
+	// a full paint numbers afresh in paint order.
+	const size_t count = buffers.objects.size();
+	object_keys.resize(count);
+	object_key_stale.resize(count, 1);
+	for (size_t i = 0; i < count; i++) {
+		if (!object_key_stale[i]) {
+			continue;
+		}
+		object_key_stale[i] = 0;
+		uint64_t key   = 14695981039346656037ull;
+		const auto own = reinterpret_cast<uintptr_t>(i < object_owners.size() ? object_owners[i] : nullptr);
+		Hash_add(key, static_cast<int32_t>(static_cast<uint64_t>(own) & 0xffffffffu));
+		Hash_add(key, static_cast<int32_t>(static_cast<uint64_t>(own) >> 32));
+		int32_t words[(sizeof(Shaded_object_record) + sizeof(Shaded_object_volume)) / 4];
+		std::memcpy(words, &buffers.objects[i], sizeof(Shaded_object_record));
+		std::memcpy(words + sizeof(Shaded_object_record) / 4, &buffers.object_volumes[i], sizeof(Shaded_object_volume));
+		for (const int32_t w : words) {
+			Hash_add(key, w);
+		}
+		Hash_add(key, buffers.object_opacity[i] | buffers.object_flags[i] << 8);
+		object_keys[i] = key;
+	}
+	const int bx0 = dirty.x / shaded_record_block;
+	const int by0 = dirty.y / shaded_record_block;
+	const int bx1 = (dirty.x + dirty.w - 1) / shaded_record_block;
+	const int by1 = (dirty.y + dirty.h - 1) / shaded_record_block;
+	auto      row = [&](int by) {
+		const int y0 = by * shaded_record_block;
+		const int y1 = std::min(y0 + shaded_record_block, gh);
+		for (int bx = bx0; bx <= bx1; bx++) {
+			const int x0   = bx * shaded_record_block;
+			const int n    = std::min(x0 + shaded_record_block, gw) - x0;
+			uint64_t  hash = 14695981039346656037ull;
+			for (int y = y0; y < y1; y++) {
+				const int idx = buffers.index(x0, y);
+				for (int k = idx; k < idx + n; k++) {
+					const uint16_t id  = buffers.object_ids[k];
+					const uint64_t obj = id == shaded_id_none ? 0 : (id > count ? 1 : object_keys[id - 1]);
+					hash = (hash ^ (static_cast<uint64_t>(buffers.height_map[k]) | static_cast<uint64_t>(buffers.normal_map[k]) << 16))
+						   * 1099511628211ull;
+					hash = (hash ^ obj) * 1099511628211ull;
+				}
+			}
+			record_blocks[static_cast<size_t>(by) * cols + bx] = hash;
+		}
+	};
+	const int block_rows = by1 - by0 + 1;
+	const int bands      = threaded && params.threads > 1 && block_rows > 1 ? std::min(params.threads, block_rows) : 1;
+	run_bands(bands, [&](int b) {
+		for (int by = by0 + block_rows * b / bands; by < by0 + block_rows * (b + 1) / bands; by++) {
+			row(by);
+		}
+	});
+}
+
+/*
+ *  Hash of the record under r (game pixels, within the area the blocks
+ *  cover): the blocks it touches, so it changes whenever the record under
+ *  r does.
+ */
+
+uint64_t Shaded_light::record_hash(const Shaded_rect& r) const {
+	const int cols = (record_blocks_w + shaded_record_block - 1) / shaded_record_block;
+	const int bx0  = r.x / shaded_record_block;
+	const int by0  = r.y / shaded_record_block;
+	const int bx1  = (r.x + r.w - 1) / shaded_record_block;
+	const int by1  = (r.y + r.h - 1) / shaded_record_block;
+	uint64_t  hash = 14695981039346656037ull;
+	for (int by = by0; by <= by1; by++) {
+		for (int bx = bx0; bx <= bx1; bx++) {
+			hash = (hash ^ record_blocks[static_cast<size_t>(by) * cols + bx]) * 1099511628211ull;
+		}
+	}
+	return hash;
+}
+
+/*
  *  Trace the shadows the lights cast into rectangle r: grid fields around
  *  each light and screen maps over r (grown for the upsampling), reusing
  *  cached ones whose inputs are unchanged when use_cache.  False if there
@@ -3668,15 +3785,30 @@ bool Shaded_light::shadow_pass(
 	auto                    q16 = [](float v) {
 		return static_cast<int64_t>(std::lround(v * 16.0f));
 	};
+	if (use_cache && (use_screen || ray)) {
+		const Clock::time_point blocks_start = tick();
+		update_record_blocks(gw, gh, threaded);
+		if (timing) {
+			stats.hash_us += since(blocks_start);
+		}
+	}
+	std::set<Shadow_key> on_screen;    // The lights whose maps are kept.
 	for (size_t i = 0; i < lights.size(); i++) {
 		const Shaded_light_record& l  = lights[i];
 		const Shaded_rect          lr = Shaded_cpu::light_screen_rect(params, l, gw, gh);
-		if (lr.w <= 0 || Intersect(lr, r).w <= 0) {
+		if (lr.w <= 0) {
+			continue;
+		}
+		const float      radius = l.radius * params.radius_scale;
+		const Shadow_key base{l.shape, l.frame, q16(l.x), q16(l.y), q16(l.z), q16(radius), q16(l.intensity), l.flags};
+		static_assert(shadow_base_size == 8);
+		if (use_cache) {
+			on_screen.insert(base);
+		}
+		if (Intersect(lr, r).w <= 0) {
 			continue;
 		}
 		stats.lights++;
-		const float      radius = l.radius * params.radius_scale;
-		const Shadow_key base{l.shape, l.frame, q16(l.x), q16(l.y), q16(l.z), q16(radius), q16(l.intensity), l.flags};
 		if (use_fields && !(l.flags & shaded_light_directional)) {
 			// The cells within reach of the light, clipped to the grid.
 			const float lx  = Shaded_wrap_delta(l.x - static_cast<float>(vol->origin_tx));
@@ -3726,8 +3858,10 @@ bool Shaded_light::shadow_pass(
 		if (!use_screen && !ray) {
 			continue;
 		}
-		// Map cells over the light's rectangle within the grown paint.
-		const Shaded_rect need = Intersect(lr, grown);
+		// Map cells over the light's rectangle within the grown paint; with
+		// the cache, over all of it, so that the next paint (a full one
+		// too) can reuse it.
+		const Shaded_rect need = use_cache ? lr : Intersect(lr, grown);
 		if (need.w <= 0) {
 			continue;
 		}
@@ -3745,16 +3879,7 @@ bool Shaded_light::shadow_pass(
 		if (use_cache) {
 			// The record where the traces can look: the light's rectangle.
 			const Clock::time_point hash_start = tick();
-			uint64_t hash = 14695981039346656037ull;
-			for (int y = lr.y; y < lr.y + lr.h; y++) {
-				const int idx = buffers.index(lr.x, y);
-				for (int k = idx; k < idx + lr.w; k++) {
-					hash = (hash
-							^ (static_cast<uint64_t>(buffers.height_map[k]) | static_cast<uint64_t>(buffers.object_ids[k]) << 16
-							   | static_cast<uint64_t>(buffers.normal_map[k]) << 32))
-						   * 1099511628211ull;
-				}
-			}
+			const uint64_t          hash       = record_hash(lr);
 			const Clock::time_point key_start = tick();
 			if (timing) {
 				stats.hash_us += std::chrono::duration<double, std::micro>(key_start - hash_start).count();
@@ -3910,7 +4035,33 @@ bool Shaded_light::shadow_pass(
 		}
 	};
 	age(field_cache, 64);
-	age(map_cache, 8);
+	// The maps of a light on screen are kept (the last 4 used: a flame
+	// cycles through a few frames), so that a paint that does not touch it
+	// leaves them for the next full one; the others go after 8 paints.
+	for (auto it = map_cache.begin(); it != map_cache.end();) {
+		std::vector<decltype(it)> group;
+		auto                      end = it;
+		while (end != map_cache.end()
+			   && std::equal(it->first.begin(), it->first.begin() + shadow_base_size, end->first.begin())) {
+			group.push_back(end++);
+		}
+		const Shadow_key base(it->first.begin(), it->first.begin() + shadow_base_size);
+		if (on_screen.count(base) != 0) {
+			std::sort(group.begin(), group.end(), [](const auto& a, const auto& b) {
+				return a->second.used > b->second.used;
+			});
+			for (size_t k = shadow_versions_kept; k < group.size(); k++) {
+				map_cache.erase(group[k]);
+			}
+		} else {
+			for (const auto& g : group) {
+				if (shadow_paints - g->second.used > 8) {
+					map_cache.erase(g);
+				}
+			}
+		}
+		it = end;
+	}
 	if (timing) {
 		stats.copy_us += since(store_start);
 	}
@@ -4426,6 +4577,8 @@ void Shaded_light::begin_object(const Game_object& obj, int ox, int oy) {
 		buffers.object_volumes.emplace_back();
 		buffers.object_flags.push_back(flags);
 		object_extents.emplace_back();
+		object_owners.push_back(&obj);
+		object_key_stale.push_back(1);
 		it->second = static_cast<uint16_t>(buffers.objects.size());
 	} else if (!inserted && it->second != shaded_id_overflow) {
 		buffers.objects[it->second - 1]        = rec;    // Moved or changed frame.
@@ -4433,6 +4586,7 @@ void Shaded_light::begin_object(const Game_object& obj, int ox, int oy) {
 		buffers.object_volumes[it->second - 1] = Shaded_object_volume{};
 		buffers.object_flags[it->second - 1]   = flags;
 		object_extents[it->second - 1]         = Shaded_rounded_extent{};
+		object_key_stale[it->second - 1]       = 1;
 	}
 	object.ox          = ox;
 	object.oy          = oy;

@@ -79,6 +79,8 @@ constexpr int shaded_height_units_per_lift = 16;
 // Object ids: 0 = no object, 1..65534 = 1 + index into the object table.
 constexpr uint16_t shaded_id_none     = 0;
 constexpr uint16_t shaded_id_overflow = 0xffff;
+// Side of the record blocks hashed for the shadow map keys, game pixels.
+constexpr int shaded_record_block = 16;
 
 enum class Shaded_view : int32_t {
 	normal = 0,
@@ -1134,6 +1136,7 @@ private:
 	Image_buffer8*        recorded     = nullptr;    // Recorded paint, until finish_paint.
 	bool                  record_on    = false;      // Config or dump.
 	std::unordered_map<const Game_object*, uint16_t> object_index;
+	std::vector<const Game_object*>                  object_owners;    // By id - 1.
 	uint16_t                                         main_actor_id = shaded_id_none;
 	bool                                             finish_due    = false;    // Recorded, finish_paint not run.
 	// Config (config/video/shaded_light/...); sliders in params.
@@ -1269,12 +1272,27 @@ private:
 	};
 
 	using Shadow_key = std::vector<int64_t>;
+	// A map key starts with the light's own part (shape, frame, position,
+	// radius, intensity, flags).
+	static constexpr size_t shadow_base_size     = 8;
+	static constexpr size_t shadow_versions_kept = 4;
 	Shaded_shadow_set                          shadow_set;
 	bool                                       shadow_set_on = false;    // This paint's pass used it.
 	Shadow_stats                               shadow_stats;
 	std::map<Shadow_key, Shadow_cache_entry>   field_cache;
 	std::map<Shadow_key, Shadow_cache_entry>   map_cache;
 	std::vector<uint8_t>                       shadow_scratch;
+	// Hashes of the record (heights, ids, normals) in blocks of
+	// shaded_record_block pixels over the game area, for the screen map
+	// keys; the blocks under the paints since the last update are hashed
+	// again.
+	std::vector<uint64_t>                      record_blocks;
+	int                                        record_blocks_w = 0;    // Game area they cover.
+	int                                        record_blocks_h = 0;
+	Shaded_rect                                record_dirty;
+	bool                                       record_dirty_all = true;
+	std::vector<uint64_t>                      object_keys;    // By id - 1: what the traces read of it.
+	std::vector<uint8_t>                       object_key_stale;    // By id - 1: painted since.
 	long long                                  shadow_paints = 0;
 	int                                        field_generation = -1;    // Grid generation of field_cache.
 	std::string                                shadow_info;    // For the dump info.
@@ -1418,6 +1436,8 @@ private:
 	void               check_shadows(const Shaded_rect& r);
 	void               check_weather(const Shaded_rect& r);
 	void               verify_paint();
+	void               update_record_blocks(int gw, int gh, bool threaded);
+	uint64_t           record_hash(const Shaded_rect& r) const;
 	bool               load_refs();
 	void               set_lit(bool on);
 	void               build_lut(uint8_t* lut) const;
