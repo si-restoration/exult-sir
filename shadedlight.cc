@@ -2752,16 +2752,39 @@ void Shaded_light::widen_paint(int& x, int& y, int& w, int& h) {
 	const Shaded_rect paint{x, y, w, h};
 	const long long   area_before = static_cast<long long>(w) * h;
 	int               x0 = x, y0 = y, x1 = x + w, y1 = y + h;
+	// A trace from a receiver to a light crosses the frame on the straight
+	// line between their pixels (the projection is linear), so what changed
+	// in the paint shades only receivers on its far side from the light:
+	// on each axis, grow away from the light, or both ways where the paint
+	// straddles it.  The margin covers the map cells around a changed one
+	// (the blur and the upsampling read one cell on each side) and the
+	// rounding of the trace samples.
+	const int margin = 3 * params.shadow_resolution + 2;
+	auto      reach  = [margin](float light, int lo, int hi, int rlo, int rhi, int& o0, int& o1) {
+        const int a = light < static_cast<float>(lo) ? lo : rlo;
+        const int b = light >= static_cast<float>(hi) ? hi : rhi;
+        o0          = std::min(o0, std::max(a, rlo) - margin);
+        o1          = std::max(o1, std::min(b, rhi) + margin);
+	};
 	for (const Shaded_light_record& l : lights) {
 		const Shaded_rect lr = Shaded_cpu::light_screen_rect(at, l, gw, gh);
 		if (lr.w <= 0 || Intersect(lr, paint).w <= 0) {
 			continue;
 		}
-		x0 = std::min(x0, lr.x);
-		y0 = std::min(y0, lr.y);
-		x1 = std::max(x1, lr.x + lr.w);
-		y1 = std::max(y1, lr.y + lr.h);
+		const float lx = Shaded_project(
+				static_cast<float>(at.scroll_tx) + Shaded_wrap_delta(l.x - static_cast<float>(at.scroll_tx)), l.z, at.scroll_tx,
+				at.scroll_px, at.pixels_per_tile, at.pixels_per_lift);
+		const float ly = Shaded_project(
+				static_cast<float>(at.scroll_ty) + Shaded_wrap_delta(l.y - static_cast<float>(at.scroll_ty)), l.z, at.scroll_ty,
+				at.scroll_py, at.pixels_per_tile, at.pixels_per_lift);
+		reach(lx, x, x + w, lr.x, lr.x + lr.w, x0, x1);
+		reach(ly, y, y + h, lr.y, lr.y + lr.h, y0, y1);
 	}
+	// Within the game area, and never smaller than the paint.
+	x0 = std::min(x, std::max(x0, 0));
+	y0 = std::min(y, std::max(y0, 0));
+	x1 = std::max(x + w, std::min(x1, gw));
+	y1 = std::max(y + h, std::min(y1, gh));
 	if (timing) {
 		widen_calls++;
 		widen_px_before += static_cast<double>(area_before);
