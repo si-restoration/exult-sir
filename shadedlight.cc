@@ -1188,6 +1188,35 @@ namespace {
 		return buf.index(x, y);
 	}
 
+	// A trace from a receiver to a light crosses the frame on the straight
+	// line between their pixels (the projection is linear), so a change of
+	// the record over [lo, hi) shades only receivers on its far side from
+	// the light's pixel: on one axis, [lo, rhi) when the light is before
+	// it, [rlo, hi) when after, all of [rlo, rhi) (the light's rectangle)
+	// when it straddles the light.  Grows [o0, o1) to that, plus margin.
+	void Far_side(float light, int lo, int hi, int rlo, int rhi, int margin, int& o0, int& o1) {
+		const int a = light < static_cast<float>(lo) ? lo : rlo;
+		const int b = light >= static_cast<float>(hi) ? hi : rhi;
+		o0          = std::min(o0, std::max(a, rlo) - margin);
+		o1          = std::max(o1, std::min(b, rhi) + margin);
+	}
+
+	// Whether cell (cx, cy) of map is traced this paint.
+	inline bool Traced_here(const Shaded_shadow_set& set, const Shaded_shadow_map& map, int cx, int cy) {
+		return map.build == 1
+			   || (map.build == 2 && set.trace_mask[map.offset + static_cast<size_t>(cy - map.y) * map.w + (cx - map.x)] != 0);
+	}
+
+	// A point light's pixel in the frame (unclipped).
+	void Light_pixel(const Shaded_light_params& params, const Shaded_light_record& l, float& x, float& y) {
+		x = Shaded_project(
+				static_cast<float>(params.scroll_tx) + Shaded_wrap_delta(l.x - static_cast<float>(params.scroll_tx)), l.z,
+				params.scroll_tx, params.scroll_px, params.pixels_per_tile, params.pixels_per_lift);
+		y = Shaded_project(
+				static_cast<float>(params.scroll_ty) + Shaded_wrap_delta(l.y - static_cast<float>(params.scroll_ty)), l.z,
+				params.scroll_ty, params.scroll_py, params.pixels_per_tile, params.pixels_per_lift);
+	}
+
 	// The upsampling taps of a pixel for the screen maps, as
 	// Shaded_cpu::shadow_screen_at weighs them, worked out once for all the
 	// lights' maps that hold all four cells.
@@ -1440,14 +1469,10 @@ void Shaded_cpu::screen_shadow_rows(
 			int   count = 0;
 			float best  = 0.0f;
 			for (uint32_t k = bin_offsets[bin]; k < bin_offsets[bin + 1]; k++) {
-				const int li = bin_lights[k];
-				const int m  = set.light_map[li];
-				if (m < 0) {
-					continue;
-				}
-				const Shaded_shadow_map&   map = set.maps[m];
-				const Shaded_light_record& l   = lights[li];
-				if (cx < map.x || cy < map.y || cx >= map.x + map.w || cy >= map.y + map.h
+				const int          li = bin_lights[k];
+				const Shaded_rect& lc = set.light_cells[li];
+				const Shaded_light_record& l = lights[li];
+				if (cx < lc.x || cy < lc.y || cx >= lc.x + lc.w || cy >= lc.y + lc.h
 					|| (own != shaded_id_none && l.object_id == own)) {
 					continue;    // Self-light is never shadowed.
 				}
@@ -1455,8 +1480,14 @@ void Shaded_cpu::screen_shadow_rows(
 				if (c <= 0.0f) {
 					continue;
 				}
+				// Lights without a map here are ranked but not traced.
+				int m = set.light_map[li];
+				if (m >= 0) {
+					const Shaded_shadow_map& map = set.maps[m];
+					m = cx < map.x || cy < map.y || cx >= map.x + map.w || cy >= map.y + map.h ? -1 : m;
+				}
 				float value = 1.0f;
-				if (ray_grid && map.build) {    // Tg for every light.
+				if (m >= 0 && ray_grid && Traced_here(set, set.maps[m], cx, cy)) {    // Tg for every light.
 					value = grid_transmittance(*ray_grid, l, set.light_boxes[li], p);
 				}
 				cand[count++] = Candidate{c, value, m, false};
@@ -1474,17 +1505,20 @@ void Shaded_cpu::screen_shadow_rows(
 					break;
 				}
 				cand[pick].taken = true;
-				const Shaded_shadow_map& map = set.maps[cand[pick].map];
-				if (!map.build) {
+				if (cand[pick].map < 0 || !Traced_here(set, set.maps[cand[pick].map], cx, cy)) {
 					continue;
 				}
+				const Shaded_shadow_map& map = set.maps[cand[pick].map];
 				const Shaded_light_record& l = lights[map.light];
 				cand[pick].value *= Screen_transmittance(buf, params, set, p, Shaded_shadow_target(l, p), own, l.object_id);
 				traces++;
 			}
 			for (int i = 0; i < count; i++) {
+				if (cand[i].map < 0) {
+					continue;
+				}
 				const Shaded_shadow_map& map = set.maps[cand[i].map];
-				if (map.build) {
+				if (Traced_here(set, map, cx, cy)) {
 					set.map_data[map.offset + static_cast<size_t>(cy - map.y) * map.w + (cx - map.x)]
 							= static_cast<uint8_t>(std::lround(std::clamp(cand[i].value, 0.0f, 1.0f) * 255.0f));
 				}
@@ -2812,33 +2846,20 @@ void Shaded_light::widen_paint(int& x, int& y, int& w, int& h) {
 	const Shaded_rect paint{x, y, w, h};
 	const long long   area_before = static_cast<long long>(w) * h;
 	int               x0 = x, y0 = y, x1 = x + w, y1 = y + h;
-	// A trace from a receiver to a light crosses the frame on the straight
-	// line between their pixels (the projection is linear), so what changed
-	// in the paint shades only receivers on its far side from the light:
-	// on each axis, grow away from the light, or both ways where the paint
-	// straddles it.  The margin covers the map cells around a changed one
-	// (the blur and the upsampling read one cell on each side) and the
-	// rounding of the trace samples.
+	// What changed in the paint shades only receivers on its far side from
+	// each light (Far_side).  The margin covers the map cells around a
+	// changed one (the blur and the upsampling read one cell on each side)
+	// and the rounding of the trace samples.
 	const int margin = 3 * params.shadow_resolution + 2;
-	auto      reach  = [margin](float light, int lo, int hi, int rlo, int rhi, int& o0, int& o1) {
-		const int a = light < static_cast<float>(lo) ? lo : rlo;
-		const int b = light >= static_cast<float>(hi) ? hi : rhi;
-		o0          = std::min(o0, std::max(a, rlo) - margin);
-		o1          = std::max(o1, std::min(b, rhi) + margin);
-	};
 	for (const Shaded_light_record& l : lights) {
 		const Shaded_rect lr = Shaded_cpu::light_screen_rect(at, l, gw, gh);
 		if (lr.w <= 0 || Intersect(lr, paint).w <= 0) {
 			continue;
 		}
-		const float lx = Shaded_project(
-				static_cast<float>(at.scroll_tx) + Shaded_wrap_delta(l.x - static_cast<float>(at.scroll_tx)), l.z, at.scroll_tx,
-				at.scroll_px, at.pixels_per_tile, at.pixels_per_lift);
-		const float ly = Shaded_project(
-				static_cast<float>(at.scroll_ty) + Shaded_wrap_delta(l.y - static_cast<float>(at.scroll_ty)), l.z, at.scroll_ty,
-				at.scroll_py, at.pixels_per_tile, at.pixels_per_lift);
-		reach(lx, x, x + w, lr.x, lr.x + lr.w, x0, x1);
-		reach(ly, y, y + h, lr.y, lr.y + lr.h, y0, y1);
+		float lx, ly;
+		Light_pixel(at, l, lx, ly);
+		Far_side(lx, x, x + w, lr.x, lr.x + lr.w, margin, x0, x1);
+		Far_side(ly, y, y + h, lr.y, lr.y + lr.h, margin, y0, y1);
 	}
 	// Within the game area, and never smaller than the paint.
 	x0 = std::min(x, std::max(x0, 0));
@@ -3746,6 +3767,131 @@ void Shaded_light::update_record_blocks(int gw, int gh, bool threaded) {
  *  r does.
  */
 
+std::vector<uint64_t> Shaded_light::record_blocks_under(const Shaded_rect& r) const {
+	const int             cols = (record_blocks_w + shaded_record_block - 1) / shaded_record_block;
+	const int             bx0  = r.x / shaded_record_block;
+	const int             by0  = r.y / shaded_record_block;
+	const int             bx1  = (r.x + r.w - 1) / shaded_record_block;
+	const int             by1  = (r.y + r.h - 1) / shaded_record_block;
+	std::vector<uint64_t> out;
+	out.reserve(static_cast<size_t>(bx1 - bx0 + 1) * (by1 - by0 + 1));
+	for (int by = by0; by <= by1; by++) {
+		out.insert(out.end(), record_blocks.begin() + static_cast<ptrdiff_t>(by) * cols + bx0,
+				   record_blocks.begin() + static_cast<ptrdiff_t>(by) * cols + bx1 + 1);
+	}
+	return out;
+}
+
+/*
+ *  The last used version of a light's map whose key differs from key only
+ *  in the record hash, over the same cells and light rectangle; null if
+ *  none.
+ */
+
+const Shaded_light::Shadow_cache_entry* Shaded_light::older_map(
+		const Shadow_key& key, const Shaded_shadow_map& m, const Shaded_rect& lr, int gw, int gh) const {
+	constexpr size_t          record_part = shadow_base_size + 1;    // After the light hash.
+	const Shadow_key          base(key.begin(), key.begin() + shadow_base_size);
+	const Shadow_cache_entry* best = nullptr;
+	for (auto it = map_cache.lower_bound(base);
+		 it != map_cache.end() && std::equal(base.begin(), base.end(), it->first.begin()); ++it) {
+		const Shadow_key&         k = it->first;
+		const Shadow_cache_entry& e = it->second;
+		if (k.size() != key.size() || k[shadow_base_size] != key[shadow_base_size]
+			|| !std::equal(k.begin() + record_part + 1, k.end(), key.begin() + record_part + 1) || e.raw.empty()
+			|| e.map.x != m.x || e.map.y != m.y || e.map.w != m.w || e.map.h != m.h || e.rect.x != lr.x || e.rect.y != lr.y
+			|| e.rect.w != lr.w || e.rect.h != lr.h || e.area_w != gw || e.area_h != gh) {
+			continue;
+		}
+		if (!best || e.used > best->used) {
+			best = &e;
+		}
+	}
+	return best;
+}
+
+/*
+ *  Start map m (to be built) from an older version of it: its values
+ *  before the blur are kept where no changed record block can reach
+ *  (Far_side from the light, 2 pixels more for the rounding of the trace
+ *  samples), and the rest is traced again (build 2).  Each kept cell's
+ *  value depends only on the record under it and on the line from it to
+ *  the light, which are the same, so the map is the one a full trace
+ *  gives.
+ */
+
+void Shaded_light::retrace_changes(
+		const Shadow_cache_entry& older, const Shaded_light_record& l, const Shaded_rect& lr, Shaded_shadow_set& set,
+		Shaded_shadow_map& m, Shadow_stats& stats) {
+	const std::vector<uint64_t> now = record_blocks_under(lr);
+	if (now.size() != older.blocks.size() || older.raw.size() != static_cast<size_t>(m.w) * m.h) {
+		return;
+	}
+	const int res  = set.resolution;
+	const int bx0  = lr.x / shaded_record_block;
+	const int by0  = lr.y / shaded_record_block;
+	const int cols = (lr.x + lr.w - 1) / shaded_record_block - bx0 + 1;
+	float     lx, ly;
+	Light_pixel(params, l, lx, ly);
+	// The receiver pixel of each map column and row (Cell_pixel).
+	std::vector<int> px(static_cast<size_t>(m.w)), py(static_cast<size_t>(m.h));
+	for (int i = 0; i < m.w; i++) {
+		px[static_cast<size_t>(i)] = std::clamp((m.x + i) * res + res / 2, 0, std::max(set.area_w - 1, 0));
+	}
+	for (int j = 0; j < m.h; j++) {
+		py[static_cast<size_t>(j)] = std::clamp((m.y + j) * res + res / 2, 0, std::max(set.area_h - 1, 0));
+	}
+	set.trace_mask.resize(set.map_data.size(), 0);
+	uint8_t*      mask   = set.trace_mask.data() + m.offset;
+	constexpr int far    = 1 << 20;    // Not clipped to the light's rectangle.
+	constexpr int slack  = 2;
+	long          marked = 0;
+	int           mx0 = m.w, my0 = m.h, mx1 = -1, my1 = -1;
+	for (size_t k = 0; k < now.size(); k++) {
+		if (now[k] == older.blocks[k]) {
+			continue;
+		}
+		const int bx = bx0 + static_cast<int>(k) % cols;
+		const int by = by0 + static_cast<int>(k) / cols;
+		const int x  = bx * shaded_record_block;
+		const int y  = by * shaded_record_block;
+		int       x0 = far, x1 = -far, y0 = far, y1 = -far;
+		Far_side(lx, x - slack, x + shaded_record_block + slack, -far, far, 0, x0, x1);
+		Far_side(ly, y - slack, y + shaded_record_block + slack, -far, far, 0, y0, y1);
+		for (int j = 0; j < m.h; j++) {
+			if (py[static_cast<size_t>(j)] < y0 || py[static_cast<size_t>(j)] >= y1) {
+				continue;
+			}
+			for (int i = 0; i < m.w; i++) {
+				if (px[static_cast<size_t>(i)] < x0 || px[static_cast<size_t>(i)] >= x1) {
+					continue;
+				}
+				uint8_t& cell = mask[static_cast<size_t>(j) * m.w + i];
+				if (!cell) {
+					cell = 1;
+					marked++;
+					mx0 = std::min(mx0, i);
+					my0 = std::min(my0, j);
+					mx1 = std::max(mx1, i);
+					my1 = std::max(my1, j);
+				}
+			}
+		}
+	}
+	if (marked == static_cast<long>(m.w) * m.h) {
+		return;    // All of it: a plain build.
+	}
+	// The cells traced again start as a new map's do (no light, no trace).
+	uint8_t* data = set.map_data.data() + m.offset;
+	for (size_t k = 0; k < older.raw.size(); k++) {
+		data[k] = mask[k] ? 255 : older.raw[k];
+	}
+	m.build                = 2;
+	retrace_box[m.light]   = marked > 0 ? Shaded_rect{m.x + mx0, m.y + my0, mx1 - mx0 + 1, my1 - my0 + 1} : Shaded_rect{};
+	stats.maps_partial++;
+	stats.cells_kept += static_cast<long>(m.w) * m.h - marked;
+}
+
 uint64_t Shaded_light::record_hash(const Shaded_rect& r) const {
 	const int cols = (record_blocks_w + shaded_record_block - 1) / shaded_record_block;
 	const int bx0  = r.x / shaded_record_block;
@@ -3831,6 +3977,9 @@ bool Shaded_light::shadow_pass(
 	set.fields.clear();
 	set.map_data.clear();
 	set.field_data.clear();
+	set.trace_mask.clear();
+	retrace_box.assign(lights.size(), Shaded_rect{});
+	set.light_cells.assign(lights.size(), Shaded_rect{});
 	if (use_cache) {
 		shadow_paints++;
 	}
@@ -3865,6 +4014,11 @@ bool Shaded_light::shadow_pass(
 		static_assert(shadow_base_size == 8);
 		if (use_cache) {
 			on_screen.insert(base);
+		}
+		if (use_screen || ray) {
+			const int lx0     = Floor_div(lr.x, res);
+			const int ly0     = Floor_div(lr.y, res);
+			set.light_cells[i] = Shaded_rect{lx0, ly0, Floor_div(lr.x + lr.w - 1, res) - lx0 + 1, Floor_div(lr.y + lr.h - 1, res) - ly0 + 1};
 		}
 		if (Intersect(lr, r).w <= 0) {
 			continue;
@@ -4000,6 +4154,9 @@ bool Shaded_light::shadow_pass(
 			m.build  = 1;
 			set.map_data.resize(set.map_data.size() + static_cast<size_t>(m.w) * m.h, 255);
 			if (use_cache) {
+				if (const Shadow_cache_entry* older = older_map(key, m, lr, gw, gh)) {
+					retrace_changes(*older, l, lr, set, m, stats);
+				}
 				map_keys.push_back(std::move(key));
 			}
 		}
@@ -4028,11 +4185,12 @@ bool Shaded_light::shadow_pass(
 	int cx0 = std::numeric_limits<int>::max(), cy0 = cx0;
 	int cx1 = std::numeric_limits<int>::min(), cy1 = cx1;
 	for (const Shaded_shadow_map& m : set.maps) {
-		if (m.build) {
-			cx0 = std::min(cx0, m.x);
-			cy0 = std::min(cy0, m.y);
-			cx1 = std::max(cx1, m.x + m.w);
-			cy1 = std::max(cy1, m.y + m.h);
+		const Shaded_rect c = m.build == 2 ? retrace_box[m.light] : Shaded_rect{m.x, m.y, m.w, m.h};
+		if (m.build && c.w > 0) {
+			cx0                  = std::min(cx0, c.x);
+			cy0                  = std::min(cy0, c.y);
+			cx1                  = std::max(cx1, c.x + c.w);
+			cy1                  = std::max(cy1, c.y + c.h);
 		}
 	}
 	if (cx1 > cx0) {
@@ -4047,6 +4205,20 @@ bool Shaded_light::shadow_pass(
 		for (const long n : traces) {
 			stats.traces += n;
 		}
+	}
+	// The values before the blur, for the next version of the map.
+	map_raws.clear();
+	bool built = false;
+	for (const Shaded_shadow_map& m : set.maps) {
+		if (m.build) {
+			built = true;
+			if (use_cache) {
+				map_raws.emplace_back(
+						set.map_data.begin() + m.offset, set.map_data.begin() + m.offset + static_cast<size_t>(m.w) * m.h);
+			}
+		}
+	}
+	if (built) {
 		// Soften the screen-space part, keeping to each surface.
 		if (use_screen && params.shadow_softness > 0.0f) {
 			shadow_scratch.resize(set.map_data.size());
@@ -4084,10 +4256,18 @@ bool Shaded_light::shadow_pass(
 	next = 0;
 	for (const Shaded_shadow_map& m : set.maps) {
 		if (m.build) {
-			Shadow_cache_entry& entry = map_cache[map_keys[next++]];
+			const Shaded_rect lr = Shaded_cpu::light_screen_rect(params, lights[m.light], gw, gh);
+			Shadow_cache_entry& entry = map_cache[map_keys[next]];
 			entry.map                 = m;
+			entry.map.build           = 0;
 			entry.data.assign(set.map_data.begin() + m.offset, set.map_data.begin() + m.offset + static_cast<size_t>(m.w) * m.h);
-			entry.used = shadow_paints;
+			entry.raw    = next < map_raws.size() ? std::move(map_raws[next]) : entry.data;
+			entry.blocks = record_blocks_under(lr);
+			entry.rect   = lr;
+			entry.area_w = gw;
+			entry.area_h = gh;
+			entry.used   = shadow_paints;
+			next++;
 		}
 	}
 	auto age = [this](std::map<Shadow_key, Shadow_cache_entry>& cache, long long limit) {
@@ -5332,7 +5512,8 @@ void Shaded_light::report_timing() const {
 				  << " " << tag << "_screen=" << t.screen / n << " " << tag << "_other="
 				  << (t.total - t.sync - t.hash - t.key - t.copy - t.field - t.screen) / n << " " << tag
 				  << "_maps=" << static_cast<double>(t.maps) / n << " " << tag << "_built=" << static_cast<double>(t.maps_built) / n
-				  << " " << tag << "_traces=" << static_cast<double>(t.traces) / n;
+				  << " " << tag << "_traces=" << static_cast<double>(t.traces) / n << " " << tag
+				  << "_partial=" << static_cast<double>(t.partial) / n << " " << tag << "_kept=" << static_cast<double>(t.kept) / n;
 	};
 	std::cout << "SHADED-PARTS: full_shadow_passes=" << full_shadow_passes << " full_light_passes=" << full_light_passes;
 	parts("full", full_shadow_timers, nf);

@@ -829,7 +829,7 @@ constexpr float Shaded_solid_trilinear(const uint8_t v[8], float fx, float fy, f
 struct Shaded_shadow_map {
 	int32_t  x = 0, y = 0, w = 0, h = 0;    // Cells.
 	int32_t  light  = 0;
-	int32_t  build  = 0;    // Traced this paint (else kept from the cache).
+	int32_t  build  = 0;    // Traced this paint (else kept from the cache); 2: where trace_mask says.
 	uint32_t offset = 0;    // Into map_data.
 	int32_t  pad    = 0;
 };
@@ -858,6 +858,14 @@ struct Shaded_shadow_set {
 	std::vector<Shaded_shadow_field> fields;
 	std::vector<uint8_t>             map_data;
 	std::vector<uint8_t>             field_data;
+	// CPU only: for a map with build 2, 1 where a cell is traced again
+	// (indexed as map_data); its other cells are kept from an older map.
+	std::vector<uint8_t>             trace_mask;
+	// CPU only: per light, the map cells its rectangle covers (w 0 for
+	// none).  A light without a map this paint still takes its turn among
+	// the strongest at a cell, so that a map traced in a partial paint is
+	// the one a full paint traces.
+	std::vector<Shaded_rect>         light_cells;
 };
 
 struct Shaded_grid_volume;
@@ -1230,6 +1238,8 @@ private:
 		int    maps_reused   = 0;
 		long   cells         = 0;    // Of all maps.
 		long   traces        = 0;    // Screen traces run.
+		int    maps_partial  = 0;    // Built from an older version.
+		long   cells_kept    = 0;    // Of those, cells not traced again.
 		int    fields_built  = 0;
 		int    fields_reused = 0;
 		double field_us      = 0;
@@ -1244,7 +1254,7 @@ private:
 	// full paints.
 	struct Shadow_timers {
 		double    sync = 0, hash = 0, key = 0, copy = 0, field = 0, screen = 0, total = 0;
-		long long maps_built = 0, maps = 0, traces = 0;
+		long long maps_built = 0, maps = 0, traces = 0, partial = 0, kept = 0;
 		void      add(const Shadow_stats& st, double us) {
 			sync += st.sync_us;
 			hash += st.hash_us;
@@ -1256,6 +1266,8 @@ private:
 			maps_built += st.maps - st.maps_reused;
 			maps += st.maps;
 			traces += st.traces;
+			partial += st.maps_partial;
+			kept += st.cells_kept;
 		}
 	};
 	// The parts of the last map cache key of each light, to count which
@@ -1267,10 +1279,17 @@ private:
 	};
 
 	struct Shadow_cache_entry {
-		Shaded_shadow_map    map;
-		Shaded_shadow_field  field;
-		std::vector<uint8_t> data;
-		long long            used = 0;    // shadow_paints when last used.
+		Shaded_shadow_map     map;
+		Shaded_shadow_field   field;
+		std::vector<uint8_t>  data;
+		long long             used = 0;    // shadow_paints when last used.
+		// Maps: the values before the blur, and the record blocks under
+		// the light's rectangle they were traced from, so that a newer
+		// version traces again only what the record changes can shade.
+		std::vector<uint8_t>  raw;
+		std::vector<uint64_t> blocks;
+		Shaded_rect           rect;    // The light's rectangle.
+		int                   area_w = 0, area_h = 0;
 	};
 
 	using Shadow_key = std::vector<int64_t>;
@@ -1295,6 +1314,8 @@ private:
 	bool                                       record_dirty_all = true;
 	std::vector<uint64_t>                      object_keys;    // By id - 1: what the traces read of it.
 	std::vector<uint8_t>                       object_key_stale;    // By id - 1: painted since.
+	std::vector<Shaded_rect>                   retrace_box;    // By light: cells traced of a build 2 map.
+	std::vector<std::vector<uint8_t>>          map_raws;    // Of the maps built, before the blur.
 	long long                                  shadow_paints = 0;
 	int                                        field_generation = -1;    // Grid generation of field_cache.
 	std::string                                shadow_info;    // For the dump info.
@@ -1440,6 +1461,12 @@ private:
 	void               verify_paint();
 	void               update_record_blocks(int gw, int gh, bool threaded);
 	uint64_t           record_hash(const Shaded_rect& r) const;
+	std::vector<uint64_t> record_blocks_under(const Shaded_rect& r) const;
+	const Shadow_cache_entry* older_map(
+			const Shadow_key& key, const Shaded_shadow_map& m, const Shaded_rect& lr, int gw, int gh) const;
+	void retrace_changes(
+			const Shadow_cache_entry& older, const Shaded_light_record& l, const Shaded_rect& lr, Shaded_shadow_set& set,
+			Shaded_shadow_map& m, Shadow_stats& stats);
 	bool               load_refs();
 	void               set_lit(bool on);
 	void               build_lut(uint8_t* lut) const;
