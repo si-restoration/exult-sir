@@ -1316,6 +1316,19 @@ private:
 	std::vector<uint8_t>                       object_key_stale;    // By id - 1: painted since.
 	std::vector<Shaded_rect>                   retrace_box;    // By light: cells traced of a build 2 map.
 	std::vector<std::vector<uint8_t>>          map_raws;    // Of the maps built, before the blur.
+	// Light levels kept from the last lit paint: what they were lit from
+	// (the record blocks, a key of the parameters, each light's map), and
+	// the blocks of this paint to light afresh.
+	struct Lit_map {
+		Shaded_shadow_map    map;
+		std::vector<uint8_t> data;
+	};
+	bool                                       levels_valid = false;
+	uint64_t                                   lit_key      = 0;
+	uint64_t                                   paint_key    = 0;
+	std::vector<uint64_t>                      lit_blocks;
+	std::map<Shadow_key, Lit_map>              lit_maps;
+	std::vector<uint8_t>                       fresh_blocks;
 	long long                                  shadow_paints = 0;
 	int                                        field_generation = -1;    // Grid generation of field_cache.
 	std::string                                shadow_info;    // For the dump info.
@@ -1424,6 +1437,9 @@ private:
 	long long         verify_bad_paints  = 0;
 	long long         verify_bad_px      = 0;
 	long long         verify_skipped     = 0;
+	long long         reuse_paints       = 0;    // Lit paints that kept levels,
+	double            reuse_px_fresh     = 0;    // the pixels they lit afresh,
+	double            reuse_px_clip      = 0;    // and their clips.
 	Clock::time_point last_report;
 	int               game_width     = 0;    // Of the last full paint.
 	int               game_height    = 0;
@@ -1453,7 +1469,8 @@ private:
 	int                light_pass(
 					   const Shaded_rect& r, uint8_t* levels, bool threaded, unsigned char* frame = nullptr,
 					   const Shaded_shadow_set* shadows = nullptr, uint8_t* shadow_out = nullptr,
-					   const Shaded_weather_set* weather = nullptr, const Shaded_weather_out* wout = nullptr);
+					   const Shaded_weather_set* weather = nullptr, const Shaded_weather_out* wout = nullptr,
+					   const uint8_t* fresh = nullptr);
 	void               run_bands(int bands, const std::function<void(int)>& job);
 	bool               shadow_pass(const Shaded_rect& r, Shaded_shadow_set& set, bool threaded, bool use_cache, Shadow_stats& stats);
 	void               check_shadows(const Shaded_rect& r);
@@ -1462,6 +1479,10 @@ private:
 	void               update_record_blocks(int gw, int gh, bool threaded);
 	uint64_t           record_hash(const Shaded_rect& r) const;
 	std::vector<uint64_t> record_blocks_under(const Shaded_rect& r) const;
+	Shadow_key            light_key(const Shaded_light_record& l) const;
+	uint64_t              levels_key() const;
+	bool                  plan_relight(bool reuse_wanted, int gw, int gh);
+	void                  remember_lit(bool valid, int gw, int gh);
 	const Shadow_cache_entry* older_map(
 			const Shadow_key& key, const Shaded_shadow_map& m, const Shaded_rect& lr, int gw, int gh) const;
 	void retrace_changes(

@@ -3424,6 +3424,7 @@ bool Shaded_light::setup_buffers(Image_window8& win) {
 		main_actor_id         = shaded_id_none;
 		need_full             = true;    // Nothing recorded outside this clip.
 		record_dirty_all      = true;
+		levels_valid          = false;
 		params.buffer_width   = buffers.width;
 		params.buffer_height  = buffers.height;
 		params.buffer_stride  = buffers.stride;
@@ -3636,17 +3637,44 @@ void Shaded_light::end_paint(Image_window8& win, bool full) {
 
 int Shaded_light::light_pass(
 		const Shaded_rect& r, uint8_t* levels, bool threaded, unsigned char* frame, const Shaded_shadow_set* shadows,
-		uint8_t* shadow_out, const Shaded_weather_set* weather, const Shaded_weather_out* wout) {
+		uint8_t* shadow_out, const Shaded_weather_set* weather, const Shaded_weather_out* wout, const uint8_t* fresh) {
 	if (r.w <= 0 || r.h <= 0) {
 		return 0;
 	}
 	const bool fog_on = params.fog && fog_table.size() == shaded_fog_table_size;
+	const int  cols   = (record_blocks_w + shaded_record_block - 1) / shaded_record_block;
 	auto       band   = [&](int b, int bands) {
 		const int y0 = r.y + r.h * b / bands;
 		const int y1 = r.y + r.h * (b + 1) / bands;
-		Shaded_cpu::light_rows(
-				buffers, params, lights.data(), buffers.bin_offsets.data(), buffers.bin_lights.data(), r, y0, y1, levels,
-				shadows, shadow_out, weather, wout);
+		if (!fresh) {
+			Shaded_cpu::light_rows(
+					buffers, params, lights.data(), buffers.bin_offsets.data(), buffers.bin_lights.data(), r, y0, y1, levels,
+					shadows, shadow_out, weather, wout);
+		}
+		// With fresh, only its blocks are lit; the others keep their levels.
+		for (int y = y0; fresh && y < y1;) {
+			const int by    = y / shaded_record_block;
+			const int yend  = std::min(y1, (by + 1) * shaded_record_block);
+			const int last  = (r.x + r.w - 1) / shaded_record_block;
+			const uint8_t* row = fresh + static_cast<size_t>(by) * cols;
+			for (int bx = r.x / shaded_record_block; bx <= last;) {
+				if (!row[bx]) {
+					bx++;
+					continue;
+				}
+				int end = bx;
+				while (end < last && row[end + 1]) {
+					end++;
+				}
+				const int x0 = std::max(r.x, bx * shaded_record_block);
+				const int x1 = std::min(r.x + r.w, (end + 1) * shaded_record_block);
+				Shaded_cpu::light_rows(
+						buffers, params, lights.data(), buffers.bin_offsets.data(), buffers.bin_lights.data(),
+						Shaded_rect{x0, r.y, x1 - x0, r.h}, y, yend, levels, shadows, shadow_out, weather, wout);
+				bx = end + 1;
+			}
+			y = yend;
+		}
 		if (frame && weather) {
 			// The fog table only while there is fog.  A flash is the traced
 			// level lift alone: the flash table is not applied, as BG's
@@ -3780,6 +3808,134 @@ std::vector<uint64_t> Shaded_light::record_blocks_under(const Shaded_rect& r) co
 				   record_blocks.begin() + static_cast<ptrdiff_t>(by) * cols + bx1 + 1);
 	}
 	return out;
+}
+
+/*
+ *  A light's own part of its shadow cache keys.
+ */
+
+Shaded_light::Shadow_key Shaded_light::light_key(const Shaded_light_record& l) const {
+	auto q16 = [](float v) {
+		return static_cast<int64_t>(std::lround(v * 16.0f));
+	};
+	return Shadow_key{l.shape,        l.frame, q16(l.x), q16(l.y), q16(l.z), q16(l.radius * params.radius_scale),
+					  q16(l.intensity), l.flags};
+}
+
+/*
+ *  What the light levels of a paint depend on besides the record and the
+ *  screen maps: the lights, the grid (the fields) and every parameter but
+ *  the ones that do not enter them (the object count, the lit flag, the
+ *  Avatar's place, used by the fog only).
+ */
+
+uint64_t Shaded_light::levels_key() const {
+	Shaded_light_params p = params;
+	p.object_count        = 0;
+	p.lit                 = 0;
+	p.avatar_x = p.avatar_y = p.avatar_z = 0.0f;
+	int32_t words[sizeof(Shaded_light_params) / 4];
+	std::memcpy(words, &p, sizeof(words));
+	uint64_t key = light_hash;
+	for (const int32_t w : words) {
+		Hash_add(key, w);
+	}
+	Hash_add(key, shadow_set_on ? 1 : 0);
+	Hash_add(key, weather_set_on ? 1 : 0);
+	Hash_add(key, Shaded_grid::active ? Shaded_grid::active->get_params().generation : -1);    // The fields.
+	return key;
+}
+
+/*
+ *  Before the light pass of a paint: whether its levels can be kept where
+ *  nothing they depend on changed since the last lit paint, and if so
+ *  which blocks (shaded_record_block pixels) to light afresh: those whose
+ *  record changed, and those that read a cell of a light's map that
+ *  differs from the map that light had then (2 cells on, for the
+ *  upsampling).  The levels outside a paint's clip are what a full pass
+ *  gives (EXULT_SHADED_VERIFY checks it), so the kept ones are too.
+ */
+
+bool Shaded_light::plan_relight(bool reuse_wanted, int gw, int gh) {
+	paint_key = levels_key();
+	if (!reuse_wanted || !levels_valid || paint_key != lit_key || record_blocks_w != gw || record_blocks_h != gh
+		|| lit_blocks.size() != record_blocks.size()) {
+		return false;
+	}
+	const int cols = (gw + shaded_record_block - 1) / shaded_record_block;
+	const int rows = (gh + shaded_record_block - 1) / shaded_record_block;
+	fresh_blocks.assign(record_blocks.size(), 0);
+	for (size_t k = 0; k < record_blocks.size(); k++) {
+		fresh_blocks[k] = record_blocks[k] != lit_blocks[k] ? 1 : 0;
+	}
+	auto mark = [&](int x0, int y0, int x1, int y1) {    // Pixels, end exclusive.
+		const int bx0 = std::max(Floor_div(x0, shaded_record_block), 0);
+		const int by0 = std::max(Floor_div(y0, shaded_record_block), 0);
+		const int bx1 = std::min(Floor_div(x1 - 1, shaded_record_block), cols - 1);
+		const int by1 = std::min(Floor_div(y1 - 1, shaded_record_block), rows - 1);
+		for (int by = by0; by <= by1; by++) {
+			std::fill_n(fresh_blocks.begin() + static_cast<ptrdiff_t>(by) * cols + bx0, std::max(bx1 - bx0 + 1, 0), 1);
+		}
+	};
+	if (shadow_set_on) {
+		const int res = shadow_set.resolution;
+		for (const Shaded_shadow_map& m : shadow_set.maps) {
+			const auto it = lit_maps.find(light_key(lights[m.light]));
+			const Shaded_shadow_map* old = it != lit_maps.end() ? &it->second.map : nullptr;
+			if (!old || old->x != m.x || old->y != m.y || old->w != m.w || old->h != m.h) {
+				mark(m.x * res - 2 * res, m.y * res - 2 * res, (m.x + m.w) * res + 2 * res, (m.y + m.h) * res + 2 * res);
+				continue;
+			}
+			const uint8_t* now = shadow_set.map_data.data() + m.offset;
+			const uint8_t* was = it->second.data.data();
+			int            i0 = m.w, j0 = m.h, i1 = -1, j1 = -1;
+			for (int j = 0; j < m.h; j++) {
+				const size_t at = static_cast<size_t>(j) * m.w;
+				if (std::memcmp(now + at, was + at, static_cast<size_t>(m.w)) == 0) {
+					continue;
+				}
+				j0 = std::min(j0, j);
+				j1 = j;
+				for (int i = 0; i < m.w; i++) {
+					if (now[at + i] != was[at + i]) {
+						i0 = std::min(i0, i);
+						i1 = std::max(i1, i);
+					}
+				}
+			}
+			if (i1 >= 0) {
+				mark((m.x + i0) * res - 2 * res, (m.y + j0) * res - 2 * res, (m.x + i1 + 1) * res + 2 * res,
+					 (m.y + j1 + 1) * res + 2 * res);
+			}
+		}
+	}
+	return true;
+}
+
+/*
+ *  After the light pass of a paint: what its levels were lit from.
+ */
+
+void Shaded_light::remember_lit(bool valid, int gw, int gh) {
+	levels_valid = valid && record_blocks_w == gw && record_blocks_h == gh;
+	lit_key      = paint_key;
+	lit_blocks   = record_blocks;
+	if (!shadow_set_on) {
+		lit_maps.clear();
+		return;
+	}
+	std::set<Shadow_key> present;
+	for (const Shaded_light_record& l : lights) {
+		present.insert(light_key(l));
+	}
+	for (auto it = lit_maps.begin(); it != lit_maps.end();) {
+		it = present.count(it->first) ? std::next(it) : lit_maps.erase(it);
+	}
+	for (const Shaded_shadow_map& m : shadow_set.maps) {
+		Lit_map& lm = lit_maps[light_key(lights[m.light])];
+		lm.map      = m;
+		lm.data.assign(shadow_set.map_data.begin() + m.offset, shadow_set.map_data.begin() + m.offset + static_cast<size_t>(m.w) * m.h);
+	}
 }
 
 /*
@@ -4010,7 +4166,7 @@ bool Shaded_light::shadow_pass(
 			continue;
 		}
 		const float      radius = l.radius * params.radius_scale;
-		const Shadow_key base{l.shape, l.frame, q16(l.x), q16(l.y), q16(l.z), q16(radius), q16(l.intensity), l.flags};
+		const Shadow_key base   = light_key(l);
 		static_assert(shadow_base_size == 8);
 		if (use_cache) {
 			on_screen.insert(base);
@@ -4536,7 +4692,7 @@ void Shaded_light::check_weather(const Shaded_rect& r) {
 
 void Shaded_light::verify_paint() {
 	Game_window* gwin = Game_window::get_instance();
-	if (!shadow_set_on || (weather_set_on && params.flash > 0.0f)) {
+	if (weather_set_on && params.flash > 0.0f) {
 		verify_skipped++;    // A flash map covers the paint's rectangle only.
 		return;
 	}
@@ -4544,12 +4700,9 @@ void Shaded_light::verify_paint() {
 	Shaded_shadow_set    fresh;
 	Shadow_stats         fresh_stats;
 	std::vector<uint8_t> levels(buffers.light_levels);
-	if (!shadow_pass(all, fresh, false, false, fresh_stats)) {
-		verify_skipped++;
-		return;
-	}
+	const bool           shadowed = shadow_set_on && shadow_pass(all, fresh, false, false, fresh_stats);
 	const Shaded_weather_set* weather = weather_set_on ? weather_set.get() : nullptr;
-	light_pass(all, levels.data(), false, nullptr, &fresh, nullptr, weather);
+	light_pass(all, levels.data(), false, nullptr, shadowed ? &fresh : nullptr, nullptr, weather);
 	long bad = 0;
 	for (int y = all.y; y < all.y + all.h; y++) {
 		const int idx = buffers.index(all.x, y);
@@ -4645,10 +4798,34 @@ void Shaded_light::finish_paint(Image_window8& win, bool full) {
 					std::fill_n(buffers.flash_levels.begin() + idx, clip.w, 0);
 				}
 			}
+			// Keep the levels where nothing they depend on changed.
+			Game_window* gw = Game_window::get_instance();
+			if (!shadow_set_on) {
+				update_record_blocks(gw->get_width(), gw->get_height(), true);
+			}
+			const bool keep = plan_relight(
+					apply && view == Shaded_view::normal && !weather_set_on && !checks, gw->get_width(), gw->get_height());
 			bands = light_pass(
 					clip, buffers.light_levels.data(), true, apply ? frame : nullptr, shadow_set_on ? &shadow_set : nullptr,
 					shadow_set_on ? buffers.shadow_levels.data() : nullptr, weather_set_on ? weather_set.get() : nullptr,
-					weather_set_on ? &wout : nullptr);
+					weather_set_on ? &wout : nullptr, keep ? fresh_blocks.data() : nullptr);
+			if (timing && keep) {
+				reuse_paints++;
+				reuse_px_clip += static_cast<double>(clip.w) * clip.h;
+				const int cols = (gw->get_width() + shaded_record_block - 1) / shaded_record_block;
+				for (int by = clip.y / shaded_record_block; by <= (clip.y + clip.h - 1) / shaded_record_block; by++) {
+					for (int bx = clip.x / shaded_record_block; bx <= (clip.x + clip.w - 1) / shaded_record_block; bx++) {
+						if (fresh_blocks[static_cast<size_t>(by) * cols + bx]) {
+							const Shaded_rect b = Intersect(
+									Shaded_rect{bx * shaded_record_block, by * shaded_record_block, shaded_record_block,
+												shaded_record_block},
+									clip);
+							reuse_px_fresh += static_cast<double>(b.w) * b.h;
+						}
+					}
+				}
+			}
+			remember_lit(apply && view == Shaded_view::normal && !weather_set_on, gw->get_width(), gw->get_height());
 			break;
 		}
 		}
@@ -4689,6 +4866,9 @@ void Shaded_light::finish_paint(Image_window8& win, bool full) {
 		}
 		// The flash has been painted: it may end now.
 		flash_shown = flash_shown || (flash_on && weather_set_on && params.flash > 0.0f);
+	}
+	if (!pass) {
+		levels_valid = false;
 	}
 	if (verify_on && pass && apply && !checks) {
 		verify_paint();
@@ -5531,5 +5711,7 @@ void Shaded_light::report_timing() const {
 			  << " key_light=" << key_light << " key_record=" << key_record << " key_scroll=" << key_scroll
 			  << " key_only_light=" << key_only_light << " key_only_scroll=" << key_only_scroll << " key_only_ls=" << key_only_ls
 			  << " verify_paints=" << verify_paints << " verify_bad_paints=" << verify_bad_paints
-			  << " verify_bad_px=" << verify_bad_px << " verify_skipped=" << verify_skipped << std::endl;
+			  << " verify_bad_px=" << verify_bad_px << " verify_skipped=" << verify_skipped << " reuse_paints=" << reuse_paints
+			  << " reuse_avg_px_fresh=" << reuse_px_fresh / static_cast<double>(std::max(reuse_paints, 1LL))
+			  << " reuse_avg_px_clip=" << reuse_px_clip / static_cast<double>(std::max(reuse_paints, 1LL)) << std::endl;
 }
