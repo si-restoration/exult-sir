@@ -1229,6 +1229,36 @@ private:
 		int    fields_reused = 0;
 		double field_us      = 0;
 		double screen_us     = 0;
+		double sync_us       = 0;    // Timing only (EXULT_SHADED_TIMING):
+		double hash_us       = 0;    // grid sync, record rectangle hashes,
+		double key_us        = 0;    // cache key building, and cache copies.
+		double copy_us       = 0;
+	};
+
+	// Sums of the pass timers, over all shadow passes and over those of
+	// full paints.
+	struct Shadow_timers {
+		double    sync = 0, hash = 0, key = 0, copy = 0, field = 0, screen = 0, total = 0;
+		long long maps_built = 0, maps = 0, traces = 0;
+		void      add(const Shadow_stats& st, double us) {
+			sync += st.sync_us;
+			hash += st.hash_us;
+			key += st.key_us;
+			copy += st.copy_us;
+			field += st.field_us;
+			screen += st.screen_us;
+			total += us;
+			maps_built += st.maps - st.maps_reused;
+			maps += st.maps;
+			traces += st.traces;
+		}
+	};
+	// The parts of the last map cache key of each light, to count which
+	// part of the key changes (timing only).
+	struct Key_parts {
+		int64_t                light_hash = 0;
+		int64_t                record     = 0;
+		std::array<int64_t, 4> scroll{};
 	};
 
 	struct Shadow_cache_entry {
@@ -1326,6 +1356,33 @@ private:
 	double            shadow_screen_us   = 0;
 	double            weather_prep_us    = 0;    // Sky maps and cloud masks, all paints.
 	long long         shadow_cache_hits  = 0;
+	Shadow_timers     all_shadow_timers;
+	Shadow_timers     full_shadow_timers;
+	double            prepare_sync_us    = 0;    // grid sync in prepare_paint, all paints.
+	long long         widen_calls        = 0;    // widen_paint calls that could grow a paint,
+	long long         widen_grew         = 0;    // those that did,
+	double            widen_px_before    = 0;    // and the pixels before and after.
+	double            widen_px_after     = 0;
+	long long         maps_built_total   = 0;    // Screen maps built and reused, all passes.
+	long long         maps_reused_total  = 0;
+	long long         fields_built_total = 0;
+	long long         fields_reused_total = 0;
+	std::map<Shadow_key, Key_parts> last_key_parts;
+	long long         key_new            = 0;    // Map key checks: no earlier key for the light,
+	long long         key_same           = 0;    // the same key,
+	long long         key_light          = 0;    // the global light hash differed,
+	long long         key_record         = 0;    // the record rectangle hash differed,
+	long long         key_scroll         = 0;    // the scroll differed,
+	long long         key_only_light     = 0;    // only the light hash differed,
+	long long         key_only_scroll    = 0;    // only the scroll differed,
+	long long         key_only_ls        = 0;    // only light hash and scroll differed.
+	// Verify (EXULT_SHADED_VERIFY): after each lit paint, light the whole
+	// game area afresh and count the pixels where the levels differ.
+	bool              verify_on          = false;
+	long long         verify_paints      = 0;
+	long long         verify_bad_paints  = 0;
+	long long         verify_bad_px      = 0;
+	long long         verify_skipped     = 0;
 	Clock::time_point last_report;
 	int               game_width     = 0;    // Of the last full paint.
 	int               game_height    = 0;
@@ -1360,6 +1417,7 @@ private:
 	bool               shadow_pass(const Shaded_rect& r, Shaded_shadow_set& set, bool threaded, bool use_cache, Shadow_stats& stats);
 	void               check_shadows(const Shaded_rect& r);
 	void               check_weather(const Shaded_rect& r);
+	void               verify_paint();
 	bool               load_refs();
 	void               set_lit(bool on);
 	void               build_lut(uint8_t* lut) const;

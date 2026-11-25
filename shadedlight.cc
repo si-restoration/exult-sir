@@ -2174,6 +2174,9 @@ Shaded_light::Shaded_light()
 	}
 	const char* tim = std::getenv("EXULT_SHADED_TIMING");
 	timing          = tim && *tim && *tim != '0';
+	// Light the whole game area afresh after each lit paint and compare.
+	const char* ver = std::getenv("EXULT_SHADED_VERIFY");
+	verify_on       = ver && *ver && *ver != '0';
 	record_on       = enabled;
 	params.enabled  = enabled ? 1 : 0;
 	if (record_on) {
@@ -2705,7 +2708,11 @@ bool Shaded_light::prepare_paint() {
 	// its own rectangle.
 	bool grid_changed = false;
 	if (lit_active && (shadows_wanted() || weather_wanted()) && Shaded_grid::active) {
+		const Clock::time_point sync_start = timing ? Clock::now() : Clock::time_point();
 		Shaded_grid::active->sync();
+		if (timing) {
+			prepare_sync_us += std::chrono::duration<double, std::micro>(Clock::now() - sync_start).count();
+		}
 		grid_changed = Shaded_grid::active->get_params().generation != lit_grid;
 	}
 	widened_shadow += grid_changed ? 1 : 0;
@@ -2743,6 +2750,7 @@ void Shaded_light::widen_paint(int& x, int& y, int& w, int& h) {
 	at.scroll_px           = gwin->get_scrolltx_lo();
 	at.scroll_py           = gwin->get_scrollty_lo();
 	const Shaded_rect paint{x, y, w, h};
+	const long long   area_before = static_cast<long long>(w) * h;
 	int               x0 = x, y0 = y, x1 = x + w, y1 = y + h;
 	for (const Shaded_light_record& l : lights) {
 		const Shaded_rect lr = Shaded_cpu::light_screen_rect(at, l, gw, gh);
@@ -2753,6 +2761,12 @@ void Shaded_light::widen_paint(int& x, int& y, int& w, int& h) {
 		y0 = std::min(y0, lr.y);
 		x1 = std::max(x1, lr.x + lr.w);
 		y1 = std::max(y1, lr.y + lr.h);
+	}
+	if (timing) {
+		widen_calls++;
+		widen_px_before += static_cast<double>(area_before);
+		widen_px_after += static_cast<double>(x1 - x0) * (y1 - y0);
+		widen_grew += (x0 != x || y0 != y || x1 != x + w || y1 != y + h) ? 1 : 0;
 	}
 	if (x0 != x || y0 != y || x1 != x + w || y1 != y + h) {
 		widened_shadow++;
@@ -3559,9 +3573,20 @@ bool Shaded_light::shadow_pass(
 	if (!shadows_wanted() || r.w <= 0 || r.h <= 0) {
 		return false;
 	}
-	Shaded_grid* grid = Shaded_grid::active;
+	// Timers for the parts of the pass (EXULT_SHADED_TIMING).
+	auto tick = [this]() {
+		return timing ? Clock::now() : Clock::time_point();
+	};
+	auto since = [](const Clock::time_point& t) {
+		return std::chrono::duration<double, std::micro>(Clock::now() - t).count();
+	};
+	Shaded_grid*            grid       = Shaded_grid::active;
+	const Clock::time_point sync_start = tick();
 	if (grid) {
 		grid->sync();
+	}
+	if (timing) {
+		stats.sync_us = since(sync_start);
 	}
 	const Shaded_grid_volume* vol = grid && grid->get_volume().size_x > 0 ? &grid->get_volume() : nullptr;
 	Game_window*              gwin       = Game_window::get_instance();
@@ -3656,7 +3681,11 @@ bool Shaded_light::shadow_pass(
 				key.insert(key.end(), {generation, vol->origin_tx, vol->origin_ty, x0, y0, z0, f.w, f.h, f.d});
 				const auto hit = use_cache ? field_cache.find(key) : field_cache.end();
 				if (hit != field_cache.end() && hit->second.data.size() == size) {
+					const Clock::time_point copy_start = tick();
 					set.field_data.insert(set.field_data.end(), hit->second.data.begin(), hit->second.data.end());
+					if (timing) {
+						stats.copy_us += since(copy_start);
+					}
 					hit->second.used = shadow_paints;
 					stats.fields_reused++;
 				} else {
@@ -3692,6 +3721,7 @@ bool Shaded_light::shadow_pass(
 		Shadow_key key;
 		if (use_cache) {
 			// The record where the traces can look: the light's rectangle.
+			const Clock::time_point hash_start = tick();
 			uint64_t hash = 14695981039346656037ull;
 			for (int y = lr.y; y < lr.y + lr.h; y++) {
 				const int idx = buffers.index(lr.x, y);
@@ -3702,6 +3732,34 @@ bool Shaded_light::shadow_pass(
 						   * 1099511628211ull;
 				}
 			}
+			const Clock::time_point key_start = tick();
+			if (timing) {
+				stats.hash_us += std::chrono::duration<double, std::micro>(key_start - hash_start).count();
+				// Which part of the key moved since this light's last key?
+				Key_parts parts;
+				parts.light_hash = static_cast<int64_t>(light_hash);
+				parts.record     = static_cast<int64_t>(hash);
+				parts.scroll     = {params.scroll_tx, params.scroll_ty, params.scroll_px, params.scroll_py};
+				if (last_key_parts.size() > 4096) {
+					last_key_parts.clear();    // Moving lights add keys.
+				}
+				const auto [last, fresh] = last_key_parts.try_emplace(base, parts);
+				if (fresh) {
+					key_new++;
+				} else {
+					const bool dl = last->second.light_hash != parts.light_hash;
+					const bool dr = last->second.record != parts.record;
+					const bool ds = last->second.scroll != parts.scroll;
+					key_same += (!dl && !dr && !ds) ? 1 : 0;
+					key_light += dl ? 1 : 0;
+					key_record += dr ? 1 : 0;
+					key_scroll += ds ? 1 : 0;
+					key_only_light += (dl && !dr && !ds) ? 1 : 0;
+					key_only_scroll += (ds && !dl && !dr) ? 1 : 0;
+					key_only_ls += (dl && ds && !dr) ? 1 : 0;
+					last->second = parts;
+				}
+			}
 			key = base;
 			key.insert(key.end(), {static_cast<int64_t>(light_hash), static_cast<int64_t>(hash), params.scroll_tx, params.scroll_ty,
 								   params.scroll_px, params.scroll_py, res, params.shadow_lights, params.shadow_steps,
@@ -3709,6 +3767,9 @@ bool Shaded_light::shadow_pass(
 								   q16(params.facing_min * 256.0f), q16(params.area_height), set.screen, set.ray_grid,
 								   ray ? generation : 0, ray ? vol->origin_tx : 0, ray ? vol->origin_ty : 0, params.rounded,
 								   params.roof_seams});
+			if (timing) {
+				stats.key_us += since(key_start);
+			}
 		}
 		const auto hit = use_cache ? map_cache.find(key) : map_cache.end();
 		if (hit != map_cache.end() && hit->second.map.x <= m.x && hit->second.map.y <= m.y
@@ -3718,7 +3779,11 @@ bool Shaded_light::shadow_pass(
 			m.w = hit->second.map.w;
 			m.h = hit->second.map.h;
 			m.offset = static_cast<uint32_t>(set.map_data.size());
+			const Clock::time_point copy_start = tick();
 			set.map_data.insert(set.map_data.end(), hit->second.data.begin(), hit->second.data.end());
+			if (timing) {
+				stats.copy_us += since(copy_start);
+			}
 			hit->second.used = shadow_paints;
 			stats.maps_reused++;
 		} else {
@@ -3796,6 +3861,7 @@ bool Shaded_light::shadow_pass(
 		return true;
 	}
 	// Keep what was built; drop fields unused for 64 paints, maps for 8.
+	const Clock::time_point store_start = tick();
 	size_t next = 0;
 	for (const Shaded_shadow_field& f : set.fields) {
 		if (f.build) {
@@ -3822,6 +3888,9 @@ bool Shaded_light::shadow_pass(
 	};
 	age(field_cache, 64);
 	age(map_cache, 8);
+	if (timing) {
+		stats.copy_us += since(store_start);
+	}
 	return true;
 }
 
@@ -4042,6 +4111,42 @@ void Shaded_light::check_weather(const Shaded_rect& r) {
 	weather_info = out.str();
 }
 
+/*
+ *  EXULT_SHADED_VERIFY: after a lit paint, light the whole game area afresh
+ *  (one thread, no cache, record as it is) and count the pixels where the
+ *  levels the window was lit with differ.  A partial paint that left a
+ *  stale shadow shows up here.  The levels are compared, not the frame:
+ *  the frame is the unlit pixel remapped by the level.
+ */
+
+void Shaded_light::verify_paint() {
+	Game_window* gwin = Game_window::get_instance();
+	if (!shadow_set_on || (weather_set_on && params.flash > 0.0f)) {
+		verify_skipped++;    // A flash map covers the paint's rectangle only.
+		return;
+	}
+	const Shaded_rect    all{0, 0, gwin->get_width(), gwin->get_height()};
+	Shaded_shadow_set    fresh;
+	Shadow_stats         fresh_stats;
+	std::vector<uint8_t> levels(buffers.light_levels);
+	if (!shadow_pass(all, fresh, false, false, fresh_stats)) {
+		verify_skipped++;
+		return;
+	}
+	const Shaded_weather_set* weather = weather_set_on ? weather_set.get() : nullptr;
+	light_pass(all, levels.data(), false, nullptr, &fresh, nullptr, weather);
+	long bad = 0;
+	for (int y = all.y; y < all.y + all.h; y++) {
+		const int idx = buffers.index(all.x, y);
+		for (int i = idx; i < idx + all.w; i++) {
+			bad += levels[i] != buffers.light_levels[i] ? 1 : 0;
+		}
+	}
+	verify_paints++;
+	verify_bad_paints += bad > 0 ? 1 : 0;
+	verify_bad_px += bad;
+}
+
 void Shaded_light::finish_paint(Image_window8& win, bool full) {
 	recorded = nullptr;
 	if (!finish_due) {
@@ -4155,14 +4260,23 @@ void Shaded_light::finish_paint(Image_window8& win, bool full) {
 				shadow_field_us += shadow_stats.field_us;
 				shadow_screen_us += shadow_stats.screen_us;
 				shadow_cache_hits += shadow_stats.fields_reused + shadow_stats.maps_reused;
+				maps_built_total += shadow_stats.maps - shadow_stats.maps_reused;
+				maps_reused_total += shadow_stats.maps_reused;
+				fields_built_total += shadow_stats.fields_built;
+				fields_reused_total += shadow_stats.fields_reused;
+				all_shadow_timers.add(shadow_stats, shadow_us);
 				if (full) {
 					full_shadow_passes++;
 					full_shadow_us += shadow_us;
+					full_shadow_timers.add(shadow_stats, shadow_us);
 				}
 			}
 		}
 		// The flash has been painted: it may end now.
 		flash_shown = flash_shown || (flash_on && weather_set_on && params.flash > 0.0f);
+	}
+	if (verify_on && pass && apply && !checks) {
+		verify_paint();
 	}
 	if (checks) {
 		// The threaded pass must give what one thread does.
@@ -4972,4 +5086,31 @@ void Shaded_light::report_timing() const {
 			  << " shadow_screen_us=" << shadow_screen_us / static_cast<double>(std::max(shadow_passes, 1LL))
 			  << " shadow_passes=" << shadow_passes << " shadow_cache_hits=" << shadow_cache_hits
 			  << " weather_prep_us=" << weather_prep_us << " flash_us=" << flash_us << std::endl;
+	const double ns = static_cast<double>(std::max(shadow_passes, 1LL));
+	const double nf = static_cast<double>(std::max(full_shadow_passes, 1LL));
+	auto parts = [](const char* tag, const Shadow_timers& t, double n) {
+		std::cout << " " << tag << "_sync=" << t.sync / n << " " << tag << "_hash=" << t.hash / n << " " << tag
+				  << "_key=" << t.key / n << " " << tag << "_copy=" << t.copy / n << " " << tag << "_field=" << t.field / n
+				  << " " << tag << "_screen=" << t.screen / n << " " << tag << "_other="
+				  << (t.total - t.sync - t.hash - t.key - t.copy - t.field - t.screen) / n << " " << tag
+				  << "_maps=" << static_cast<double>(t.maps) / n << " " << tag << "_built=" << static_cast<double>(t.maps_built) / n
+				  << " " << tag << "_traces=" << static_cast<double>(t.traces) / n;
+	};
+	std::cout << "SHADED-PARTS: full_shadow_passes=" << full_shadow_passes << " full_light_passes=" << full_light_passes;
+	parts("full", full_shadow_timers, nf);
+	parts("all", all_shadow_timers, ns);
+	std::cout << std::endl;
+	std::cout << "SHADED-DETAIL: shadow_sync_us=" << all_shadow_timers.sync / ns << " shadow_hash_us=" << all_shadow_timers.hash / ns
+			  << " shadow_key_us=" << all_shadow_timers.key / ns << " shadow_cachecopy_us=" << all_shadow_timers.copy / ns
+			  << " full_shadow_sync_us=" << full_shadow_timers.sync / nf << " full_shadow_hash_us=" << full_shadow_timers.hash / nf
+			  << " full_shadow_key_us=" << full_shadow_timers.key / nf << " full_shadow_cachecopy_us=" << full_shadow_timers.copy / nf
+			  << " prepare_sync_us=" << prepare_sync_us / np << " widen_calls=" << widen_calls << " widen_grew=" << widen_grew
+			  << " widen_avg_px_before=" << widen_px_before / static_cast<double>(std::max(widen_calls, 1LL))
+			  << " widen_avg_px_after=" << widen_px_after / static_cast<double>(std::max(widen_calls, 1LL))
+			  << " maps_built=" << maps_built_total << " maps_reused=" << maps_reused_total << " fields_built=" << fields_built_total
+			  << " fields_reused=" << fields_reused_total << " key_new=" << key_new << " key_same=" << key_same
+			  << " key_light=" << key_light << " key_record=" << key_record << " key_scroll=" << key_scroll
+			  << " key_only_light=" << key_only_light << " key_only_scroll=" << key_only_scroll << " key_only_ls=" << key_only_ls
+			  << " verify_paints=" << verify_paints << " verify_bad_paints=" << verify_bad_paints
+			  << " verify_bad_px=" << verify_bad_px << " verify_skipped=" << verify_skipped << std::endl;
 }
