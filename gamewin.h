@@ -124,6 +124,7 @@ class Game_window {
 	int           std_delay;             // Standard delay between frames.
 	long          time_stopped;          // For 'stop time' spell.
 	unsigned long special_light;         // Game minute when light spell ends.
+	int           special_light_tier;    // 0 none, 1 Light, 2 Great Light; not saved.
 	int           theft_warnings;        // # times warned in current chunk.
 	short         theft_cx, theft_cy;    // Chunk where warnings occurred.
 	// Gameplay objects:
@@ -662,10 +663,19 @@ public:
 		infravision_active = state;
 	}
 
+	inline bool is_ambient_light() const {    // Cutscene ambient light only.
+		return ambient_light;
+	}
 	inline bool is_special_light() const {    // Light spell in effect?
 		return ambient_light || special_light != 0;
 	}
 
+	// The light spell in effect, for shaded light: 0 none, 1 Light, 2 Great
+	// Light.  Under shaded light the spell is a light at the Avatar, not a
+	// palette.
+	int get_special_light_tier() const {
+		return special_light != 0 ? special_light_tier : 0;
+	}
 	// Light spell.
 	void add_special_light(int units);
 

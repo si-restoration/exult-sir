@@ -312,6 +312,14 @@ struct Shaded_light_entry {
 };
 
 /*
+ *  The rows the light spells get without a magic section.
+ */
+// Light spells in the magic section: Light and Great Light.
+constexpr int shaded_magic_kinds = 2;
+constexpr Shaded_light_entry Shaded_default_magic(int kind) {
+	return kind == 0 ? Shaded_light_entry{6, 140, 217, 235, 255, -1, 0} : Shaded_light_entry{12, 180, 217, 235, 255, -1, 0};
+}
+/*
  *  The row a light without its own row gets, from its light_data
  *  brightness b (candle 1, torch 5, lamp 7).
  */
@@ -1143,6 +1151,8 @@ private:
 	std::string                                       table_game;    // Game and mod it was read for.
 	bool                                              table_loaded = false;
 	int                                               table_radius = 0;    // Largest radius, tiles.
+	// The magic section: Light, Great Light.
+	std::array<Shaded_light_entry, shaded_magic_kinds> magic_table{Shaded_default_magic(0), Shaded_default_magic(1)};
 	// The volumes section, keyed by (shape, frame or -1): Shaded_volume.
 	std::map<std::pair<int, int>, uint8_t> volume_table;
 	// Rounded silhouettes by frame, skip value, kind, box and offset of the

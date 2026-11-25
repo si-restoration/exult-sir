@@ -77,7 +77,7 @@
 #	Burning urn.
 :998/-1/10/120/255/214/170/-1/0
 #	Helm of light, when not being worn.
-:1013/-1/8/100/255/214/170/-1/0
+:1013/-1/8/140/217/235/255/-1/0
 #	Not original light sources:
 #	Flame thrower trap.
 :159/1/6/80/255/214/170/-1/0
@@ -109,6 +109,32 @@
 #	shape 440 ("light") has the light flag but paints a visible 62x63 frame,
 #	so it keeps the formula default (b = 1) until a dump shows otherwise:
 #:440/-1/8/35/255/240/210/0/1
+%%endsection
+%%section magic
+#	Light spells.  With shaded light on, Light and Great Light do not turn
+#	the whole screen to daylight (the palette Exult uses without it).  The
+#	clock keeps its own ambient, night stays night, and the Avatar carries
+#	a light with a radius instead.  Shadows block it and it moves with the
+#	Avatar, as a carried torch does.  No palette is chosen for the spell, so
+#	the colour and sun work built on shaded light see the ambient unchanged.
+#
+#	Format
+#		:kind/radius/brightness/red/green/blue/height/flags
+#
+#	kind		0 = Light (In Lor), 1 = Great Light (Vas Lor).  The spell
+#				lasts as long as it does without shaded light.
+#	The other fields are as in the lights section (radius in tiles,
+#				brightness in percent with 100 = a torch).  The light is
+#				always at about hand height, so height is ignored.
+#
+#	Change the radius to taste.
+:0/6/140/217/235/255/-1/0
+:1/12/180/217/235/255/-1/0
+#
+#	The Helm of Light (shape 1013) is not a spell.  Wearing it runs the
+#	game's infravision call (a daylight palette without shaded light) and it
+#	is a light source, so under shaded light it lights as a carried light
+#	by its row in the lights section above (radius 8).
 %%endsection
 %%section volumes
 #	Rounded volumes: the shape the shaded light renderer gives an object's

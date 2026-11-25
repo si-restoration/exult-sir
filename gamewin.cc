@@ -90,6 +90,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <sstream>
@@ -314,7 +315,7 @@ Game_window::Game_window(
 		  gump_man(new Gump_manager), party_man(new Party_manager), win(nullptr), npc_prox(new Npc_proximity_handler(this)),
 		  pal(nullptr), tqueue(new Time_queue()), background_noise(new Background_noise(this)), usecode(nullptr), combat(false),
 		  focus(true), ice_dungeon(false), painted(false), ambient_light(false), infravision_active(false), skip_above_actor(31),
-		  in_dungeon(0), num_npcs1(0), std_delay(c_std_delay), time_stopped(0), special_light(0), theft_warnings(0), theft_cx(255),
+		  in_dungeon(0), num_npcs1(0), std_delay(c_std_delay), time_stopped(0), special_light(0), special_light_tier(0), theft_warnings(0), theft_cx(255),
 		  theft_cy(255), moving_barge(nullptr), main_actor(nullptr), camera_actor(nullptr), npcs(0), bodies(0), scrolltx(0),
 		  scrollty(0), dirty(0, 0, 0, 0), save_names{}, mouse3rd(false), fastmouse(false), double_click_closes_gumps(false),
 		  text_bg(false), step_tile_delta(8), allow_right_pathfind(2), scroll_with_mouse(false), alternate_drop(false),
@@ -710,10 +711,13 @@ bool Game_window::in_infravision() const {
 void Game_window::add_special_light(int units    // Light=500, GreatLight=5000.
 ) {
 	if (!special_light) {    // Nothing in effect now?
-		special_light = clock->get_total_minutes();
+		special_light      = clock->get_total_minutes();
+		special_light_tier = 0;
 		clock->set_palette();
 	}
 	special_light += units / 20;    // Figure ending time.
+	// Great Light is 5000 units, Light 500; a stronger spell is not lowered.
+	special_light_tier = std::max(special_light_tier, units >= 2000 ? 2 : 1);
 }
 
 /*
@@ -966,6 +970,7 @@ void Game_window::clear_world(bool restoremapedit) {
 	moving_barge       = nullptr;    // Get out of barge mode.
 	landing_barge      = nullptr;
 	special_light      = 0;        // Clear out light spells.
+	special_light_tier = 0;
 	ambient_light      = false;    // And ambient lighting.
 	infravision_active = false;
 	effects->remove_all_effects(false);
@@ -1537,6 +1542,9 @@ void Game_window::read_gwin() {
 		special_light = 0;
 		return;
 	}
+	// The save keeps only the end minute: more than a Light spell's worth
+	// left (500 units, 25 minutes) can only be Great Light.
+	special_light_tier = special_light == 0 ? 0 : (special_light > clock->get_total_minutes() + 25 ? 2 : 1);
 
 	const int track_num = gin.read4();
 	const int repeat    = gin.read4();

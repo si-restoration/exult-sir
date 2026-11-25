@@ -459,6 +459,35 @@ namespace {
 		explicit Shaded_volume_reader(Volume_table& t) : Base_reader(false), table(t) {}
 	};
 
+	/*
+	 *  Reads the magic section of shaded_light.txt, the light spells:
+	 *      kind/radius/brightness/red/green/blue/height/flags
+	 *  Kind 0 is Light, 1 is Great Light.  Patch rows replace static rows
+	 *  with the same kind.
+	 */
+	class Shaded_magic_reader final : public Base_reader {
+		std::array<Shaded_light_entry, shaded_magic_kinds>& table;
+	protected:
+		void read_data(std::istream& in, size_t index, int version, bool patch, Exult_Game game, bool binary) override {
+			ignore_unused_variable_warning(index, version, patch, game, binary);
+			const int kind = ReadInt(in, -1);
+			if (kind < 0 || kind >= shaded_magic_kinds) {
+				return;
+			}
+			const Shaded_light_entry def = Shaded_default_magic(kind);
+			Shaded_light_entry       entry;
+			entry.radius     = std::max(ReadInt(in, def.radius), 0);
+			entry.brightness = std::max(ReadInt(in, def.brightness), 0);
+			entry.red        = std::clamp(ReadInt(in, def.red), 0, 255);
+			entry.green      = std::clamp(ReadInt(in, def.green), 0, 255);
+			entry.blue       = std::clamp(ReadInt(in, def.blue), 0, 255);
+			entry.height     = ReadInt(in, def.height);
+			entry.flags      = ReadInt(in, def.flags) & (shaded_light_area | shaded_light_off);
+			table[kind]      = entry;
+		}
+	public:
+		explicit Shaded_magic_reader(std::array<Shaded_light_entry, shaded_magic_kinds>& t) : Base_reader(false), table(t) {}
+	};
 	// FNV-1a over 32-bit values.
 	void Hash_add(uint64_t& hash, int32_t value) {
 		auto v = static_cast<uint32_t>(value);
@@ -2350,15 +2379,19 @@ void Shaded_light::load_table() {
 	silhouettes.clear();    // Shape frames may be other ones now.
 	light_table.clear();
 	volume_table.clear();
+	for (int kind = 0; kind < shaded_magic_kinds; kind++) {
+		magic_table[kind] = Shaded_default_magic(kind);    // As without a magic section.
+	}
 	int resource = -1;
 	if (game == BLACK_GATE) {
 		resource = EXULT_BG_FLX_SHADED_LIGHT_TXT;
 	} else if (game == SERPENT_ISLE) {
 		resource = EXULT_SI_FLX_SHADED_LIGHT_TXT;
 	}
-	std::array<std::string_view, 2> sections{"lights", "volumes"};
+	std::array<std::string_view, 3> sections{"lights", "volumes", "magic"};
 	std::array                      readers = make_unique_array<Base_reader>(
-            std::make_unique<Shaded_light_reader>(light_table), std::make_unique<Shaded_volume_reader>(volume_table));
+            std::make_unique<Shaded_light_reader>(light_table), std::make_unique<Shaded_volume_reader>(volume_table),
+            std::make_unique<Shaded_magic_reader>(magic_table));
 	static_assert(sections.size() == readers.size());
 	try {
 		Read_text_data_file("shaded_light", readers, sections, false, game, resource);
@@ -2369,7 +2402,12 @@ void Shaded_light::load_table() {
 	for (const auto& [id, entry] : light_table) {
 		table_radius = std::max(table_radius, entry.radius);
 	}
+	for (const Shaded_light_entry& entry : magic_table) {
+		table_radius = std::max(table_radius, entry.radius);
+	}
 	std::cout << "SHADED: light table has " << light_table.size() << " rows" << std::endl;
+	std::cout << "SHADED: magic light rows " << shaded_magic_kinds << " (radius " << magic_table[0].radius << " and "
+			  << magic_table[1].radius << " tiles)" << std::endl;
 	std::cout << "SHADED: volume rows " << volume_table.size() << " (rounded " << (params.rounded ? "on" : "off")
 			  << ", roof seams " << (params.rounded && params.roof_seams ? "on" : "off") << ")" << std::endl;
 }
@@ -2578,6 +2616,17 @@ void Shaded_light::gather_lights() {
 		}
 		if (!found) {
 			add_light(*actor, *actor, Shaded_default_light(actor->get_light_source()), Shaded_light_row::formula, true);
+		}
+	}
+	// The light spells: a light at the Avatar instead of the spell palette
+	// (the clock keeps its ambient).  Great Light over Light, one light only;
+	// it is carried, so it sits at hand height and the shadows block it.
+	const Actor* avatar = gwin->get_main_actor();
+	const int    tier   = gwin->get_special_light_tier();
+	if (avatar && tier > 0 && avatar->get_lift() < skip_lift) {
+		const Shaded_light_entry& entry = magic_table[tier - 1];
+		if (!(entry.flags & shaded_light_off)) {
+			add_light(*avatar, *avatar, entry, Shaded_light_row::formula, true);
 		}
 	}
 	// Hash of what the lighting depends on, positions to 1/16 tile.

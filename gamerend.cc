@@ -423,7 +423,8 @@ void Game_window::paint(
 		// Also check light spell.
 		if (special_light && clock->get_total_minutes() > special_light) {
 			// Just expired.
-			special_light = 0;
+			special_light      = 0;
+			special_light_tier = 0;
 			clock->set_palette();
 		}
 		// Set palette for lights.  Shaded light lights the world itself, so

@@ -93,7 +93,12 @@ void Game_clock::set_time_palette(bool force) {
 	// This is the information we will need to determine what palette/transition
 	// we want.
 	const bool invis           = main_actor && main_actor->get_flag(Obj_flags::invisible);
-	const bool infra           = gwin->in_infravision();
+	// Shaded light draws the light spells and the Helm of Light's infravision
+	// as lights at the Avatar and leaves the clock's palette alone.  Cheat
+	// infravision and the ambient (cutscene) light stay palettes.
+	const bool shaded          = Shaded_light::get().lighting_enabled();
+	const bool special         = shaded ? gwin->is_ambient_light() : gwin->is_special_light();
+	const bool infra           = shaded ? cheat.in_infravision() : gwin->in_infravision();
 	const bool invis_change    = invis && (force || !old_invisible);
 	const bool infra_change    = !main_actor || (infra && (force || !old_infravision));
 	const int  new_dungeon     = gwin->is_in_dungeon();
@@ -106,10 +111,10 @@ void Game_clock::set_time_palette(bool force) {
 	const bool light_sensitive = force || is_dark_palette(new_palette) || is_dark_palette(old_palette);
 	const bool light_change    = light_sensitive
 							  && (force || (light_source_level != old_light_level)
-								  || (gwin->is_special_light() != old_special_light) || (new_dungeon != dungeon));
+								  || (special != old_special_light) || (new_dungeon != dungeon));
 
 	// These are the final palettes we will use for checking.
-	new_palette = get_final_palette(new_palette, cloudy, foggy, light_source_level, gwin->is_special_light(), infra, invis);
+	new_palette = get_final_palette(new_palette, cloudy, foggy, light_source_level, special, infra, invis);
 	old_palette = get_final_palette(
 			old_palette, was_overcast, was_foggy, old_light_level, old_special_light, old_infravision, old_invisible);
 
@@ -117,7 +122,7 @@ void Game_clock::set_time_palette(bool force) {
 	was_overcast      = cloudy;
 	was_foggy         = foggy;
 	old_light_level   = light_source_level;
-	old_special_light = gwin->is_special_light();
+	old_special_light = special;
 	dungeon           = new_dungeon;
 	old_invisible     = invis;
 	old_infravision   = infra;
