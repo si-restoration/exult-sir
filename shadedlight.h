@@ -81,6 +81,8 @@ constexpr uint16_t shaded_id_none     = 0;
 constexpr uint16_t shaded_id_overflow = 0xffff;
 // Side of the record blocks hashed for the shadow map keys, game pixels.
 constexpr int shaded_record_block = 16;
+// Bands of rows per light pass thread.
+constexpr int shaded_bands_per_thread = 4;
 
 enum class Shaded_view : int32_t {
 	normal = 0,

@@ -1188,6 +1188,57 @@ namespace {
 		return buf.index(x, y);
 	}
 
+	// The upsampling taps of a pixel for the screen maps, as
+	// Shaded_cpu::shadow_screen_at weighs them, worked out once for all the
+	// lights' maps that hold all four cells.
+	struct Screen_taps {
+		int   i0 = 0, j0 = 0;
+		float w[4] = {0.0f, 0.0f, 0.0f, 0.0f};    // (0, 0), (1, 0), (0, 1), (1, 1).
+	};
+
+	Screen_taps Screen_taps_at(const Shaded_scene_buffers& buf, const Shaded_shadow_set& set, int x, int y, int height) {
+		const int   res = set.resolution;
+		const int   nx  = x - res / 2;
+		const int   ny  = y - res / 2;
+		Screen_taps t;
+		t.i0           = Floor_div(nx, res);
+		t.j0           = Floor_div(ny, res);
+		const float fx = static_cast<float>(nx - t.i0 * res) / static_cast<float>(res);
+		const float fy = static_cast<float>(ny - t.j0 * res) / static_cast<float>(res);
+		for (int dj = 0; dj < 2; dj++) {
+			for (int di = 0; di < 2; di++) {
+				float w = (di ? fx : 1.0f - fx) * (dj ? fy : 1.0f - fy);
+				if (w > 0.0f && std::abs(buf.height_map[Cell_pixel(buf, set, t.i0 + di, t.j0 + dj)] - height) > shaded_height_units_per_lift) {
+					w *= 0.05f;
+				}
+				t.w[dj * 2 + di] = w;
+			}
+		}
+		return t;
+	}
+
+	// Shaded_cpu::shadow_screen_at for a map that holds all four taps.
+	inline bool Taps_inside(const Screen_taps& t, const Shaded_shadow_map& map) {
+		return t.i0 >= map.x && t.j0 >= map.y && t.i0 + 1 < map.x + map.w && t.j0 + 1 < map.y + map.h;
+	}
+
+	inline float Taps_sample(const Screen_taps& t, const Shaded_shadow_set& set, const Shaded_shadow_map& map) {
+		const uint8_t* data = set.map_data.data() + map.offset + static_cast<size_t>(t.j0 - map.y) * map.w + (t.i0 - map.x);
+		float          wsum = 0.0f;
+		float          vsum = 0.0f;
+		for (int dj = 0; dj < 2; dj++) {
+			for (int di = 0; di < 2; di++) {
+				const float w = t.w[dj * 2 + di];
+				if (w <= 0.0f) {
+					continue;
+				}
+				wsum += w;
+				vsum += w * static_cast<float>(data[static_cast<size_t>(dj) * map.w + di]);
+			}
+		}
+		return wsum > 0.0f ? vsum / (wsum * 255.0f) : 1.0f;
+	}
+
 	// World position of a recorded pixel as Shaded_cpu::light_rows has it
 	// (unwrapped, from the scroll tile).
 	inline Shaded_point Pixel_world(const Shaded_scene_buffers& buf, const Shaded_light_params& params, int x, int y) {
@@ -1703,11 +1754,19 @@ void Shaded_cpu::light_rows(
 			}
 			// Light let through: 1 - strength * (1 - Ts * Tg).  With strength
 			// 0 it is exactly 1, and the sums below are those without shadows.
-			auto shadow_factor = [&](int li) {
+			Screen_taps taps;
+			bool        taps_ready = false;
+			auto        shadow_factor = [&](int li) {
 				float     t = 1.0f;
 				const int m = shadows->light_map[li];
 				if (m >= 0) {
-					t = shadow_screen_at(buf, *shadows, shadows->maps[m], x, y, buf.height_map[idx]);
+					const Shaded_shadow_map& map = shadows->maps[m];
+					if (!taps_ready) {
+						taps       = Screen_taps_at(buf, *shadows, x, y, buf.height_map[idx]);
+						taps_ready = true;
+					}
+					t = Taps_inside(taps, map) ? Taps_sample(taps, *shadows, map)
+											   : shadow_screen_at(buf, *shadows, map, x, y, buf.height_map[idx]);
 				}
 				const int f = shadows->light_field[li];
 				if (f >= 0) {
@@ -3578,7 +3637,9 @@ int Shaded_light::light_pass(
 			Shaded_cpu::apply_light_rows(buffers, r, y0, y1, levels, remap.data(), frame);
 		}
 	};
-	const int bands = threaded && params.threads > 1 && r.w * r.h >= 4096 ? std::min(params.threads, r.h) : 1;
+	// Bands are taken as the workers come free: more bands than threads
+	// even out a machine's faster and slower cores.
+	const int bands = threaded && params.threads > 1 && r.w * r.h >= 4096 ? std::min(params.threads * shaded_bands_per_thread, r.h) : 1;
 	if (bands <= 1) {
 		band(0, 1);
 		return 1;
@@ -3947,7 +4008,7 @@ bool Shaded_light::shadow_pass(
 		set.light_map[i] = static_cast<int32_t>(set.maps.size());
 		set.maps.push_back(m);
 	}
-	const int bands = threaded && params.threads > 1 ? params.threads : 1;
+	const int bands = threaded && params.threads > 1 ? params.threads * shaded_bands_per_thread : 1;
 	// Grid fields: bands of field rows across the fields being built.
 	const Clock::time_point field_start = Clock::now();
 	if (stats.fields_built > 0) {
