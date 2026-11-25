@@ -4700,7 +4700,7 @@ void Shaded_light::verify_paint() {
 	Shaded_shadow_set    fresh;
 	Shadow_stats         fresh_stats;
 	std::vector<uint8_t> levels(buffers.light_levels);
-	const bool           shadowed = shadow_set_on && shadow_pass(all, fresh, false, false, fresh_stats);
+	const bool           shadowed = shadow_pass(all, fresh, false, false, fresh_stats);    // As a full paint would.
 	const Shaded_weather_set* weather = weather_set_on ? weather_set.get() : nullptr;
 	light_pass(all, levels.data(), false, nullptr, shadowed ? &fresh : nullptr, nullptr, weather);
 	long bad = 0;
@@ -4803,8 +4803,11 @@ void Shaded_light::finish_paint(Image_window8& win, bool full) {
 			if (!shadow_set_on) {
 				update_record_blocks(gw->get_width(), gw->get_height(), true);
 			}
-			const bool keep = plan_relight(
-					apply && view == Shaded_view::normal && !weather_set_on && !checks, gw->get_width(), gw->get_height());
+			const bool painted = clip.w > 0 && clip.h > 0;    // Else nothing is lit, and nothing changes.
+			const bool keep    = painted
+							  && plan_relight(
+									  apply && view == Shaded_view::normal && !weather_set_on && !checks, gw->get_width(),
+									  gw->get_height());
 			bands = light_pass(
 					clip, buffers.light_levels.data(), true, apply ? frame : nullptr, shadow_set_on ? &shadow_set : nullptr,
 					shadow_set_on ? buffers.shadow_levels.data() : nullptr, weather_set_on ? weather_set.get() : nullptr,
@@ -4825,7 +4828,9 @@ void Shaded_light::finish_paint(Image_window8& win, bool full) {
 					}
 				}
 			}
-			remember_lit(apply && view == Shaded_view::normal && !weather_set_on, gw->get_width(), gw->get_height());
+			if (painted) {
+				remember_lit(apply && view == Shaded_view::normal && !weather_set_on, gw->get_width(), gw->get_height());
+			}
 			break;
 		}
 		}
