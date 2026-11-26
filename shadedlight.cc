@@ -1277,6 +1277,11 @@ namespace {
 							wz};
 	}
 
+	// Whether record id is a roof (a slab: see shaded_object_roof).
+	inline bool Is_roof_pixel(const Shaded_scene_buffers& buf, int id) {
+		return id != shaded_id_none && id != shaded_id_overflow && static_cast<size_t>(id) <= buf.object_flags.size()
+			   && (buf.object_flags[static_cast<size_t>(id) - 1] & shaded_object_roof) != 0;
+	}
 	// Unshadowed light of l at p on a face with normal n (no self-light),
 	// as Shaded_cpu::light_rows adds it.
 	float Unshadowed(const Shaded_light_params& params, const Shaded_light_record& l, const Shaded_point& p, const Shaded_normalf& n) {
@@ -1770,6 +1775,7 @@ void Shaded_cpu::light_rows(
 			const float         py   = base_y + wz * lift_tile;
 			const Shaded_normalf n   = Shaded_pixel_normal(buf, idx, face);
 			const int           id   = buf.object_ids[idx];
+			const bool          roof_px = Is_roof_pixel(buf, id);
 			const int           bin  = bin_y * params.bins_x + std::clamp(x / params.bin_size, 0, params.bins_x - 1);
 			float               sum  = 0.0f;
 			float               full = 0.0f;    // Unshadowed sum, with shadows.
@@ -1814,6 +1820,9 @@ void Shaded_cpu::light_rows(
 					sum += l.intensity;    // The light's own object.
 					full += l.intensity;
 					continue;
+				}
+				if (roof_px && (l.flags & shaded_light_covered)) {
+					continue;    // Under this roof: it stays dark from outside.
 				}
 				const float radius = l.radius * params.radius_scale;
 				const float r2     = radius * radius;
@@ -2238,6 +2247,9 @@ Shaded_light::Shaded_light()
 	if (const char* seams = std::getenv("EXULT_SHADED_ROOF_SEAMS"); seams && *seams) {
 		params.roof_seams = *seams != '0' ? 1 : 0;
 	}
+	if (const char* cover = std::getenv("EXULT_SHADED_ROOF_COVER"); cover && *cover) {
+		params.roof_cover = *cover != '0' ? 1 : 0;
+	}
 	// Weather overrides, for the twins (EXULT_SHADED_WEATHER=0 is the look
 	// without weather lighting); percentages as in the config.
 	auto env_percent = [](const char* name, float& value) {
@@ -2393,6 +2405,9 @@ void Shaded_light::read_sliders() {
 	bool roof_seams;
 	config->value(base + "roof_seams", roof_seams, true);
 	params.roof_seams = roof_seams ? 1 : 0;
+	bool roof_cover;
+	config->value(base + "roof_cover", roof_cover, true);
+	params.roof_cover = roof_cover ? 1 : 0;
 	params.night_tint = std::min(percent("night_tint", 0), 1.0f);
 	// Weather.
 	bool weather;
@@ -2724,6 +2739,25 @@ void Shaded_light::gather_lights() {
 		const Shaded_light_entry& entry = magic_table[tier - 1];
 		if (!(entry.flags & shaded_light_off)) {
 			add_light(*avatar, *avatar, entry, Shaded_light_row::formula, true);
+		}
+	}
+	// A light under a roof that is drawn does not light the roof from
+	// outside (the roof pixels are those of its own building).  The grid's
+	// sky map holds 1 + the lift of the highest cover; the cover is drawn
+	// while it lies under the render skip lift (a party inside a building
+	// does not draw its roof).
+	if (Shaded_grid* grid = params.roof_cover ? Shaded_grid::active : nullptr) {
+		grid->sync();
+		const Shaded_grid_volume& vol = grid->get_volume();
+		for (Shaded_light_record& rec : lights) {
+			int lx = 0;
+			int ly = 0;
+			if (vol.size_x > 0 && vol.local(static_cast<int>(rec.x), static_cast<int>(rec.y), lx, ly)) {
+				const int sky = vol.sky[static_cast<size_t>(ly) * static_cast<size_t>(vol.size_x) + static_cast<size_t>(lx)];
+				if (sky > 0 && rec.z < static_cast<float>(sky) && sky - 1 < skip_lift) {
+					rec.flags |= shaded_light_covered;
+				}
+			}
 		}
 	}
 	// Hash of what the lighting depends on, positions to 1/16 tile.

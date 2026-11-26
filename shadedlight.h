@@ -174,7 +174,8 @@ struct alignas(16) Shaded_light_params {
 	int32_t rounded          = 1;
 	int32_t roof_seams       = 1;
 	float   rounded_profile  = 1.0f;    // Reserved: bulge profile scale.
-	float   rounded_reserved = 0.0f;
+	// A light under a drawn roof does not light that roof (shaded_light_covered).
+	int32_t roof_cover       = 1;
 	// Weather (config/video/shaded_light/weather/...).  weather = 0 lights
 	// exactly as before it was added; weather_active is set per paint when
 	// the light pass has weather terms to apply.
@@ -246,6 +247,9 @@ constexpr uint8_t shaded_object_roof    = 2;    // A slab: occludes, a grid roof
 constexpr int32_t shaded_light_area    = 1;    // Even light, horizontal distance.
 constexpr int32_t shaded_light_off     = 2;    // Gives no shaded light.
 constexpr int32_t shaded_light_carried = 4;    // Readied by a party member.
+// Under a roof that is drawn (set per paint from the grid, never in the
+// table): the light does not light that roof's own pixels.
+constexpr int32_t shaded_light_covered = 16;
 // Reserved for the sun and moon (never set yet): x, y and z then hold the
 // direction towards the light, in tiles, tiles and lifts per unit.
 constexpr int32_t shaded_light_directional = 8;
