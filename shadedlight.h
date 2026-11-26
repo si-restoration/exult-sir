@@ -202,10 +202,30 @@ struct alignas(16) Shaded_light_params {
 	int32_t cloud_count = 0;
 	float   flash   = 0.0f;
 	float   flash_x = 0.0f, flash_y = 0.0f, flash_z = 0.0f;
+	float   flash_reserved[3] = {0.0f, 0.0f, 0.0f};
+	// Sun and daylight (config/video/shaded_light/sun/...).  sun = 0 lights
+	// exactly as before it was added; sun_active is set per paint (the sun
+	// is up, outside a dungeon).  The sun's direction (towards it, tiles,
+	// tiles, lifts per tile of path) and the rest are worked out once per
+	// game minute.
+	int32_t sun        = 1;
+	int32_t sun_active = 0;
+	int32_t sun_pad[2] = {0, 0};
+	float   sun_shade  = 0.22f;    // Light a full shadow takes from the day's.
+	float   sun_indoor = 0.18f;    // Light a room with no daylight loses.
+	float   sun_face   = 0.5f;     // Share of the shade a face turned from the sun takes.
+	float   sun_beams  = 1.0f;     // Strength of the sun through openings.
+	float   sun_x = 0.0f, sun_y = 0.0f, sun_z = 1.0f;
+	float   sun_k     = 0.0f;    // Strength now: time of day, fog, overcast.
+	float   sun_fade  = 0.0f;    // 0 at night .. 1 in full day.
+	float   sun_slope = 1.0f;    // Lifts the sun's ray climbs per tile.
+	float   sun_soft  = 0.5f;    // Penumbra, tiles.
+	float   day_reach = 5.0f;    // Tiles daylight spreads into a room.
 };
 
 static_assert(sizeof(Shaded_light_params) % 16 == 0);
 static_assert(offsetof(Shaded_light_params, weather) % 16 == 0);
+static_assert(offsetof(Shaded_light_params, sun) % 16 == 0);
 static_assert(std::is_trivially_copyable_v<Shaded_light_params> && std::is_standard_layout_v<Shaded_light_params>);
 
 /*
@@ -1056,6 +1076,11 @@ public:
 		return lighting_on && params.shadows != 0;
 	}
 
+	// Lighting is on and so is the sun (the grid then runs too).
+	bool sun_wanted() const {
+		return lighting_on && params.sun != 0;
+	}
+
 	// Lighting is on and so is weather lighting (the grid then runs too).
 	bool weather_wanted() const {
 		return lighting_on && params.weather != 0;
@@ -1226,7 +1251,7 @@ private:
 	std::vector<std::vector<uint8_t>>  ref_pals;    // shaded_ref_palettes, 768 each.
 	std::string                        refs_game;    // Game the refs were read for.
 	uint64_t                           lit_hash    = 0;    // Light hash of the last lit paint.
-	std::array<float, 23>              lit_sliders{};    // Sliders of the last lit paint.
+	std::array<float, 37>              lit_sliders{};    // Sliders of the last lit paint.
 	int                                lit_grid    = -1;    // Grid generation of the last lit paint.
 	std::vector<unsigned char>         unlit_frame;    // Frame before the pass, for dumps.
 	long                               relit_pixels = 0;
@@ -1346,6 +1371,7 @@ private:
 	float                overcast_target      = 0.0f;    // 1 while the world palette is OVERCAST.
 	float                shadow_strength_config = 1.0f;    // Before the overcast softening.
 	float                shadow_softness_config = 1.0f;
+	float                sun_soft_config        = 0.5f;    // Penumbra before the overcast widening, tiles.
 	uint64_t             cloud_hash      = 0;
 	uint64_t             lit_cloud_hash  = 0;
 	int                  open_generation = -1;    // What the sky map was built for.
@@ -1381,8 +1407,21 @@ private:
 	double               flash_pass_us     = 0;
 	double               flash_us          = 0;    // Totals over all flash passes.
 	std::string          weather_info;    // For the dump info.
+	// Sun: the clock's minute the direction was worked out for (-1 =
+	// none), the configured shadow settings it scales, and what the
+	// ceilings and the daylight map were built for.
+	int                  sun_minute      = -1;
+	bool                 sun_lit         = false;    // The sun's daylight lights DAY (last gather).
+	bool                 last_sun_lit    = false;
+	float                sun_up          = 0.0f;     // Sine of the sun's hour angle, 0 at night.
+	float                sun_hour        = 0.0f;     // Hours of the clock, fractional.
+	std::array<int, 9>   sun_built{};                // Grid generation, origin, size, direction, slope, canopy.
+	bool                 sun_built_valid = false;
+	long long            sun_builds      = 0;    // Ceilings built, all paints.
+	double               sun_prep_us     = 0;
 	// Headless debug hooks (EXULT_SHADED_HOUR, EXULT_SHADED_TELEPORT).
 	int  pending_hour     = -1;
+	int  pending_minute   = 0;
 	bool pending_teleport = false;
 	int  teleport_to[3]   = {0, 0, 0};
 	// Headless dumps (EXULT_SHADED_DUMP).
@@ -1464,10 +1503,12 @@ private:
 						  const Game_object& source, const Game_object& owner, const Shaded_light_entry& entry,
 						  Shaded_light_row row, bool carried);
 	void               shift(int dx, int dy);
-	std::array<float, 23> slider_values() const;
+	std::array<float, 37> slider_values() const;
 	bool               load_weather_refs();
 	bool               prepare_weather();
 	void               prepare_weather_pass();
+	void               update_sun_clock();
+	void               finish_sun_params();
 	void               flash_pass(const Shaded_rect& r);
 	void               end_flash();
 	int                light_pass(

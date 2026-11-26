@@ -108,6 +108,16 @@ struct Shaded_weather_set {
 	int32_t           flash_map = -1;
 	// Rain and snow (FEAT-004): 1 per pixel painted by a drop.
 	const uint8_t* particles = nullptr;
+	// Sun and daylight (set when params.sun_active), over the sky map's
+	// columns: the height in lifts of the sun's shadow ceiling above each
+	// column (solid cover, and tree canopy with the opacity of the canopy
+	// that casts it), and the daylight let into covered columns through
+	// openings, 255 at an opening down to 0 at the reach.
+	bool                 sun_on = false;
+	std::vector<float>   sun_ceiling;
+	std::vector<float>   sun_canopy;
+	std::vector<uint8_t> sun_canopy_op;
+	std::vector<uint8_t> day_open;
 };
 
 /*
@@ -306,7 +316,147 @@ namespace Shaded_cpu {
 	// yoff), translucent ones too, as 1 in particle_mask, clipped to clip.
 	void mark_spans(
 			Shaded_scene_buffers& buf, const Shaded_rect& clip, const unsigned char* rle, int xoff, int yoff);
+	// The sun's shadow ceilings over a volume's columns (size_x x size_y).
+	// (dx, dy) is the unit direction towards the sun in the ground plane
+	// and slope the lifts its ray climbs per tile.  A column's ceiling is
+	// the highest, over the columns towards the sun, of their cover height
+	// less what the ray has climbed to reach their near edge: a point of
+	// the column below it is in shadow.  Solid cover is vol.sky (roofs,
+	// walls); canopy_op is the opacity of the tallest canopy over a
+	// column, and canopy the ceiling of that.  The ceilings start at -8
+	// lifts (all clear).  Each column looks at most max_tiles tiles
+	// towards the sun, so the cost is columns times that.
+	void build_sun_ceiling(
+			const Shaded_grid_volume& vol, float dx, float dy, float slope, int max_tiles, std::vector<float>& solid,
+			std::vector<float>& canopy, std::vector<uint8_t>& canopy_op);
+	// The daylight map: 255 at a column open to the sky, falling to 0 at
+	// reach tiles by the chamfer distance through covered columns clear at
+	// lift 1 (open doors, doorways, bars as the grid's rules make them) and
+	// through walls with an opening in them (windows, shutters: a column
+	// with a clear gap between solid cells), which cost window_cost
+	// tiles more to cross.
+	void build_day_open(const Shaded_grid_volume& vol, float reach_tiles, float window_cost, std::vector<uint8_t>& open);
 }    // namespace Shaded_cpu
+
+/*
+ *  Daylight (sun shadows, and the daylight let into covered places) at a
+ *  surface point p with normal n, as the light pass has it.  level (0..1)
+ *  multiplies the sky light of the pixel: 1 for a sunlit surface, down to
+ *  1 - sun_shade in the sun's shadow, and indoors to 1 - sun_indoor where
+ *  no daylight comes in.  lamp (0..1) scales the lamps' light there: they
+ *  are off by day in the open.  cloud is the sky light's cloud term (1 =
+ *  clear, less under a cloud), which weakens the sun's shade too.
+ *
+ *  Outdoors (the surface is at or above the cover over it): the sun is
+ *  seen where the ceiling over its column is below it, softly, and where
+ *  the face is turned to the sun.  Under cover: the daylight map's
+ *  spill, and the sun's beam through an opening, found with a grid ray.
+ */
+struct Shaded_sun_result {
+	float level = 1.0f;
+	float lamp  = 1.0f;
+};
+// The sun's direction as a unit vector in tiles (x, y, z).
+inline Shaded_normalf Shaded_sun_direction(const Shaded_light_params& params) {
+	return Shaded_normalf{params.sun_x, params.sun_y, params.sun_z * params.tiles_per_lift};
+}
+// The face factor, 1 for a surface turned to the sun (ground and tops
+// included), 0 for one turned away or at a grazing angle.
+inline float Shaded_sun_face(const Shaded_light_params& params, const Shaded_normalf& n) {
+	const Shaded_normalf l = Shaded_sun_direction(params);
+	const float ndotl      = n.x * l.x + n.y * l.y + n.z * l.z;
+	return std::clamp(ndotl / std::max(l.z, 0.2f), 0.0f, 1.0f);
+}
+inline Shaded_sun_result Shaded_sun_term(
+		const Shaded_light_params& params, const Shaded_weather_set& set, const Shaded_point& p, const Shaded_normalf& n,
+		float cloud) {
+	Shaded_sun_result out;
+	const float       face_lit = Shaded_sun_face(params, n);
+	const float       face     = 1.0f - params.sun_face * (1.0f - face_lit);
+	const Shaded_grid_volume* vol = set.grid;
+	const bool have = vol && set.open_w > 0 && set.open_h > 0
+					  && set.sun_ceiling.size() >= static_cast<size_t>(set.open_w) * static_cast<size_t>(set.open_h);
+	out.lamp = 1.0f - params.sun_fade;
+	if (!have) {
+		// Nothing known of the world round it: lit, by its face alone.
+		out.level = 1.0f - params.sun_shade * params.sun_k * (1.0f - face) * cloud;
+		return out;
+	}
+	auto column = [](float w, int origin, int size) {
+		int c = static_cast<int>(std::floor(w)) - origin;
+		c %= c_num_tiles;
+		c += c < 0 ? c_num_tiles : 0;
+		return c < size ? c : -1;
+	};
+	const float qx = p.x + 0.5f * n.x;
+	const float qy = p.y + 0.5f * n.y;
+	const int   tx = column(qx, set.open_tx, set.open_w);
+	const int   ty = column(qy, set.open_ty, set.open_h);
+	if (tx < 0 || ty < 0) {
+		out.level = 1.0f - params.sun_shade * params.sun_k * (1.0f - face) * cloud;
+		return out;
+	}
+	const auto   w   = static_cast<size_t>(set.open_w);
+	const size_t col = static_cast<size_t>(ty) * w + static_cast<size_t>(tx);
+	// The four columns round the point (centres at +0.5), clamped at the
+	// grid's edge.
+	const float  gx  = qx - 0.5f;
+	const float  gy  = qy - 0.5f;
+	const float  fx  = gx - std::floor(gx);
+	const float  fy  = gy - std::floor(gy);
+	const int    cx  = std::clamp(column(gx, set.open_tx, set.open_w), 0, set.open_w - 1);
+	const int    cy  = std::clamp(column(gy, set.open_ty, set.open_h), 0, set.open_h - 1);
+	const int    cx1 = std::min(cx + 1, set.open_w - 1);
+	const int    cy1 = std::min(cy + 1, set.open_h - 1);
+	const size_t idx[4]
+			= {static_cast<size_t>(cy) * w + static_cast<size_t>(cx), static_cast<size_t>(cy) * w + static_cast<size_t>(cx1),
+			   static_cast<size_t>(cy1) * w + static_cast<size_t>(cx), static_cast<size_t>(cy1) * w + static_cast<size_t>(cx1)};
+	const float tap[4] = {(1.0f - fx) * (1.0f - fy), fx * (1.0f - fy), (1.0f - fx) * fy, fx * fy};
+	auto        blend  = [&](auto&& get) {
+        return tap[0] * get(idx[0]) + tap[1] * get(idx[1]) + tap[2] * get(idx[2]) + tap[3] * get(idx[3]);
+	};
+	const bool covered = p.z + 1.0f / 32.0f < static_cast<float>(vol->sky[col]);
+	if (covered) {
+		// Under cover: no sun, but what comes in through openings.
+		float day = 0.0f;
+		if (!set.day_open.empty()) {
+			const float spill = blend([&](size_t i) {
+									return static_cast<float>(set.day_open[i]);
+								}) / 255.0f;
+			day = 0.8f * spill * spill;
+			if (params.sun_beams > 0.0f && spill > 0.0f && params.sun_z > 0.0f && p.z < shaded_flash_top) {
+				// The beam: the grid's transmittance from the surface up
+				// the sun's ray, which an opening lets through.
+				const float        s = (shaded_flash_top - p.z) / params.sun_z;
+				const Shaded_point from{p.x + 0.25f * n.x, p.y + 0.25f * n.y, p.z + 0.05f};
+				const Shaded_point target{from.x + params.sun_x * s, from.y + params.sun_y * s, shaded_flash_top};
+				const float        beam = Shaded_cpu::flash_grid_transmittance(*vol, from, target);
+				day                     = std::max(day, std::min(beam * face, 1.0f) * params.sun_beams);
+			}
+		}
+		out.level = 1.0f - params.sun_indoor * params.sun_fade * (1.0f - std::min(day, 1.0f));
+		out.lamp  = 1.0f;
+		return out;
+	}
+	const float soft = std::max(params.sun_soft * params.sun_slope, 0.35f);    // Lifts of the penumbra.
+	auto        seen = [&](float ceiling) {
+        return std::clamp(0.5f - (ceiling - p.z) / soft, 0.0f, 1.0f);
+	};
+	float vis = seen(blend([&](size_t i) {
+		return set.sun_ceiling[i];
+	}));
+	if (set.sun_canopy.size() == set.sun_ceiling.size()) {
+		const float op = blend([&](size_t i) {
+							 return static_cast<float>(set.sun_canopy_op[i]);
+						 }) / 255.0f;
+		const float cv = seen(blend([&](size_t i) {
+			return set.sun_canopy[i];
+		}));
+		vis *= 1.0f - std::min(op * 1.5f, 1.0f) * (1.0f - cv);
+	}
+	out.level = 1.0f - params.sun_shade * params.sun_k * (1.0f - vis * face) * cloud;
+	return out;
+}
 
 // Synthetic tests over hand-built volumes; prints SHADED-WEATHER: TEST
 // lines.  With the game's DAY and FOG palettes (raw 6-bit colours), also

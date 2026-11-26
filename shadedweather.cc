@@ -182,6 +182,154 @@ void Shaded_cpu::build_sky_open(const Shaded_grid_volume& vol, float fade_tiles,
 }
 
 /*
+ *  The sun's shadow ceilings: for each column, a walk towards the sun over
+ *  the columns' cover heights (a sweep of a shadow over a height map, at
+ *  the grid's resolution, so a tile row costs a few operations a tile).
+ */
+void Shaded_cpu::build_sun_ceiling(
+		const Shaded_grid_volume& vol, float dx, float dy, float slope, int max_tiles, std::vector<float>& solid,
+		std::vector<float>& canopy, std::vector<uint8_t>& canopy_op) {
+	const int    w     = vol.size_x;
+	const int    h     = vol.size_y;
+	const size_t count = static_cast<size_t>(std::max(w, 0)) * static_cast<size_t>(std::max(h, 0));
+	constexpr float clear = -8.0f;
+	solid.assign(count, clear);
+	canopy.assign(count, clear);
+	canopy_op.assign(count, 0);
+	std::vector<uint8_t> own_op(count, 0);    // Opacity of the canopy over each column.
+	if (count == 0 || vol.sky.size() < count || slope <= 0.0f) {
+		return;
+	}
+	// The canopy's top and opacity over each column.
+	std::vector<uint8_t> canopy_top(count, 0);
+	for (int y = 0; y < h; y++) {
+		for (int x = 0; x < w; x++) {
+			const size_t i = static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x);
+			for (int z = vol.size_z - 1; z >= 0; z--) {
+				const size_t c = vol.index(x, y, z);
+				if ((vol.cells[c + 1] & shaded_cell_canopy) && vol.cells[c] >= 24) {
+					canopy_top[i] = static_cast<uint8_t>(z + 1);
+					own_op[i]     = vol.cells[c];
+					break;
+				}
+			}
+		}
+	}
+	// One step along the major axis is a tile; the ray moves in the other
+	// by the ratio.  s tiles along the ray have climbed s * slope lifts,
+	// which tops the grid (shaded_grid_lifts) at last.
+	const float major = std::max(std::fabs(dx), std::fabs(dy));
+	if (major < 1e-4f) {
+		return;
+	}
+	const float sx    = dx / major;
+	const float sy    = dy / major;
+	const float per   = 1.0f / major;    // Tiles of ray per step.
+	const int   steps = std::min(max_tiles, static_cast<int>(std::ceil(static_cast<float>(shaded_grid_lifts) / (slope * per))) + 1);
+	for (int y = 0; y < h; y++) {
+		for (int x = 0; x < w; x++) {
+			const size_t i  = static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x);
+			float        hs = clear;
+			float        hc = clear;
+			uint8_t      op = 0;
+			for (int k = 1; k <= steps; k++) {
+				const int nx = static_cast<int>(std::floor(static_cast<float>(x) + sx * static_cast<float>(k) + 0.5f));
+				const int ny = static_cast<int>(std::floor(static_cast<float>(y) + sy * static_cast<float>(k) + 0.5f));
+				if (nx < 0 || ny < 0 || nx >= w || ny >= h) {
+					break;
+				}
+				const size_t j     = static_cast<size_t>(ny) * static_cast<size_t>(w) + static_cast<size_t>(nx);
+				const float  rise  = std::max(static_cast<float>(k) * per - 0.5f, 0.0f) * slope;
+				if (vol.sky[j] > 0) {
+					hs = std::max(hs, static_cast<float>(vol.sky[j]) - rise);
+				}
+				if (canopy_top[j] > 0) {
+					const float v = static_cast<float>(canopy_top[j]) - rise;
+					if (v > hc) {
+						hc = v;
+						op = own_op[j];
+					}
+				}
+			}
+			solid[i] = hs;
+			canopy[i] = hc;
+			canopy_op[i] = hc > clear ? op : 0;
+		}
+	}
+}
+/*
+ *  The daylight map: chamfer distances from the open columns, through
+ *  covered columns that are clear at lift 1 (cost 1 a tile) or walls with
+ *  an opening (cost 1 + window_cost).
+ */
+void Shaded_cpu::build_day_open(const Shaded_grid_volume& vol, float reach_tiles, float window_cost, std::vector<uint8_t>& open) {
+	const int w = vol.size_x;
+	const int h = vol.size_y;
+	open.assign(static_cast<size_t>(std::max(w, 0)) * static_cast<size_t>(std::max(h, 0)), 0);
+	if (w <= 0 || h <= 0 || vol.sky.size() < open.size() || reach_tiles <= 0.0f) {
+		return;
+	}
+	constexpr float    unreached = std::numeric_limits<float>::max();
+	constexpr float    diag      = 1.41421356f;
+	const int          lift      = std::min(1, vol.size_z - 1);
+	std::vector<float> dist(open.size(), unreached);
+	std::vector<float> cost(open.size(), 0.0f);    // 0: cannot be crossed.
+	for (int y = 0; y < h; y++) {
+		for (int x = 0; x < w; x++) {
+			const size_t i = static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x);
+			dist[i]        = vol.sky[i] == 0 ? 0.0f : unreached;
+			if (vol.opacity(x, y, lift) < shaded_grid_sky_threshold) {
+				cost[i] = 1.0f;
+			} else {
+				// A wall: a gap in it (clear, with solid below and above)
+				// lets daylight through.
+				bool below = false;
+				bool gap   = false;
+				for (int z = 0; z < vol.size_z; z++) {
+					const bool solid = vol.opacity(x, y, z) >= shaded_grid_sky_threshold;
+					if (solid && gap) {
+						cost[i] = 1.0f + window_cost;
+						break;
+					}
+					below = below || solid;
+					gap   = !solid && below;
+				}
+			}
+		}
+	}
+	auto at = [&](int x, int y) {
+		return x < 0 || y < 0 || x >= w || y >= h ? unreached : dist[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)];
+	};
+	auto relax = [&](int x, int y, int sx, int sy) {
+		const size_t i = static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x);
+		if (dist[i] == 0.0f || cost[i] <= 0.0f) {
+			return;
+		}
+		const float c = cost[i];
+		dist[i]       = std::min({dist[i], at(x - sx, y) + c, at(x, y - sy) + c, at(x - sx, y - sy) + diag * c,
+								  at(x + sx, y - sy) + diag * c});
+	};
+	for (int round = 0; round < 2; round++) {
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				relax(x, y, 1, 1);
+			}
+		}
+		for (int y = h - 1; y >= 0; y--) {
+			for (int x = w - 1; x >= 0; x--) {
+				relax(x, y, -1, -1);
+			}
+		}
+	}
+	for (size_t i = 0; i < open.size(); i++) {
+		if (dist[i] == 0.0f) {
+			open[i] = 255;
+		} else if (dist[i] < reach_tiles) {
+			open[i] = static_cast<uint8_t>(std::clamp(std::lround(255.0f * (1.0f - dist[i] / reach_tiles)), 0L, 255L));
+		}
+	}
+}
+/*
  *  A cloud frame's soft mask.  The padding is twice the blur radius, the
  *  reach of two box passes, so the soft edge is never cut off.
  */
@@ -524,6 +672,106 @@ int Shaded_weather_selftest(const uint8_t* day768, const uint8_t* fog768, const 
 	const float p_half    = Shaded_particle_level(0.3f, 0.8f, 0.5f);
 	report(p_covered == 0.3f && p_open == 0.8f && std::abs(p_half - 0.55f) < 1e-6f, "particle-level",
 		   "covered " + Fmt(p_covered) + " open " + Fmt(p_open) + " half " + Fmt(p_half));
+	// The sun's ceilings: a wall 4 lifts high along x = 12, the sun east
+	// of it climbing 1 lift a tile.
+	{
+		Shaded_grid_volume sv;
+		sv.origin_tx = 1000;
+		sv.origin_ty = 2000;
+		sv.resize(24, 24, shaded_grid_lifts);
+		for (int y = 0; y < 24; y++) {
+			sv.stamp_box(12, y, 0, 12, y, 3, 255, wall);
+		}
+		sv.stamp_box(3, 3, 6, 3, 3, 8, 80, shaded_cell_canopy | shaded_cell_object);
+		sv.rebuild_sky(0, 0, sv.size_x, sv.size_y, shaded_grid_sky_threshold);
+		std::vector<float>   solid, canopy;
+		std::vector<uint8_t> canopy_op;
+		Shaded_cpu::build_sun_ceiling(sv, 1.0f, 0.0f, 1.0f, 40, solid, canopy, canopy_op);
+		auto ceil_at = [&](int x, int y) {
+			return solid[static_cast<size_t>(y) * 24 + static_cast<size_t>(x)];
+		};
+		report(std::abs(ceil_at(10, 5) - 2.5f) < 1e-4f && std::abs(ceil_at(8, 5) - 0.5f) < 1e-4f && ceil_at(7, 5) < 0.0f,
+			   "sun-ceiling-shadow-length", "x=10: " + Fmt(ceil_at(10, 5)) + " x=8: " + Fmt(ceil_at(8, 5)) + " x=7: " + Fmt(ceil_at(7, 5)));
+		report(ceil_at(13, 5) < 0.0f && ceil_at(20, 5) < 0.0f, "sun-ceiling-sunward-clear",
+			   "x=13: " + Fmt(ceil_at(13, 5)) + " x=20: " + Fmt(ceil_at(20, 5)));
+		// A canopy of 80 opacity over (3, 3), lifts 6-8 (top 9): its shadow
+		// is 2 tiles west of it at 9 - 2.5 + ... lifts, carrying its opacity.
+		const size_t c0 = static_cast<size_t>(3) * 24 + 1;
+		report(canopy_op[c0] == 80 && canopy[c0] > 5.0f && canopy[static_cast<size_t>(3) * 24 + 20] < 0.0f, "sun-canopy-ceiling",
+			   "x=1: " + Fmt(canopy[c0]) + " op " + std::to_string(canopy_op[c0]));
+		// A shadowed point is dark, a point above the ceiling or sunward of
+		// the wall lit.
+		Shaded_weather_set ss;
+		ss.grid = &sv;
+		ss.open_w = 24;
+		ss.open_h = 24;
+		ss.open_tx = 1000;
+		ss.open_ty = 2000;
+		ss.sun_on = true;
+		ss.sun_ceiling = solid;
+		ss.sun_canopy = canopy;
+		ss.sun_canopy_op = canopy_op;
+		Shaded_light_params sp;
+		sp.sun_active = 1;
+		sp.sun_k      = 1.0f;
+		sp.sun_fade   = 1.0f;
+		sp.sun_x      = 0.6f;
+		sp.sun_y      = 0.0f;
+		sp.sun_z      = 0.8f / sp.tiles_per_lift;
+		sp.sun_slope  = 1.0f;
+		const Shaded_normalf up2{0.0f, 0.0f, 1.0f};
+		auto term = [&](float x, float y, float z) {
+			return Shaded_sun_term(sp, ss, Shaded_point{1000.0f + x, 2000.0f + y, z}, up2, 1.0f).level;
+		};
+		const float lit_ground = term(18.5f, 5.5f, 0.0f);
+		const float shaded     = term(10.5f, 5.5f, 0.0f);
+		const float high       = term(10.5f, 5.5f, 6.0f);
+		report(lit_ground > 0.999f && shaded < 1.0f - 0.9f * sp.sun_shade && high > 0.999f, "sun-term-shadow",
+			   "lit " + Fmt(lit_ground) + " shaded " + Fmt(shaded) + " above " + Fmt(high));
+		sp.sun_k = 0.0f;
+		report(term(10.5f, 5.5f, 0.0f) == 1.0f, "sun-term-fog-off", "level " + Fmt(term(10.5f, 5.5f, 0.0f)));
+	}
+	// The daylight map: a room with a doorway, and one with a window.
+	{
+		Shaded_grid_volume dv;
+		dv.origin_tx = 1000;
+		dv.origin_ty = 2000;
+		dv.resize(24, 24, shaded_grid_lifts);
+		auto walls = [&dv](int lo, int hi) {
+			for (int i = lo; i <= hi; i++) {
+				dv.stamp_box(i, lo, 0, i, lo, 4, 255, wall);
+				dv.stamp_box(i, hi, 0, i, hi, 4, 255, wall);
+				dv.stamp_box(lo, i, 0, lo, i, 4, 255, wall);
+				dv.stamp_box(hi, i, 0, hi, i, 4, 255, wall);
+			}
+			dv.stamp_box(lo + 1, lo + 1, 5, hi - 1, hi - 1, 5, 255, wall | shaded_cell_roof);
+		};
+		walls(2, 9);      // Doorway at (5, 9).
+		walls(13, 20);    // Window at (16, 13), lifts 2-3.
+		for (int z = 0; z <= 4; z++) {
+			dv.cells[dv.index(5, 9, z)]     = 0;
+			dv.cells[dv.index(5, 9, z) + 1] = 0;
+		}
+		for (int z = 2; z <= 3; z++) {
+			dv.cells[dv.index(16, 13, z)]     = 0;
+			dv.cells[dv.index(16, 13, z) + 1] = 0;
+		}
+		dv.rebuild_sky(0, 0, dv.size_x, dv.size_y, shaded_grid_sky_threshold);
+		std::vector<uint8_t> day;
+		Shaded_cpu::build_day_open(dv, 5.0f, 2.0f, day);
+		auto d = [&](int x, int y) {
+			return static_cast<int>(day[static_cast<size_t>(y) * 24 + static_cast<size_t>(x)]);
+		};
+		report(d(0, 0) == 255 && d(5, 8) > 150 && d(5, 5) > 0 && d(5, 5) < d(5, 8) && d(3, 3) == 0, "day-open-doorway",
+			   "door " + std::to_string(d(5, 9)) + " 1 in " + std::to_string(d(5, 8)) + " 4 in " + std::to_string(d(5, 5)) + " far corner "
+					   + std::to_string(d(3, 3)));
+		report(d(16, 14) > 0 && d(16, 14) < d(5, 8) && d(16, 18) == 0 && d(19, 14) == 0, "day-open-window",
+			   "behind the window " + std::to_string(d(16, 14)) + " far " + std::to_string(d(16, 18)) + " beside "
+					   + std::to_string(d(19, 14)));
+		// A wall without an opening lets nothing in.
+		report(d(14, 14) == 0 && d(16, 14) > 0, "day-open-no-wall-leak",
+			   "beside the window " + std::to_string(d(14, 14)));
+	}
 	if (day768 && lightning768) {
 		std::vector<uint8_t> table(shaded_flash_table_size);
 		Shaded_cpu::build_flash_table(day768, lightning768, table.data());

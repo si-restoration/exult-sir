@@ -1683,6 +1683,8 @@ void Shaded_cpu::light_rows(
 												 : nullptr;
 	// Rain and snow painted over the frame (1 per marked pixel).
 	const uint8_t* particles = weather && params.precipitation ? weather->particles : nullptr;
+	// The sun and the daylight let into covered places.
+	const bool sun = weather && params.sun_active && weather->sun_on;
 	float flash_l[3] = {params.flash_x, params.flash_y, params.flash_z * params.tiles_per_lift};
 	if (const float len = std::sqrt(flash_l[0] * flash_l[0] + flash_l[1] * flash_l[1] + flash_l[2] * flash_l[2]); len > 0.0f) {
 		for (float& c : flash_l) {
@@ -1781,6 +1783,7 @@ void Shaded_cpu::light_rows(
 			float               full = 0.0f;    // Unshadowed sum, with shadows.
 			float               ambient_p = ambient;    // The sky term, after the weather.
 			float               o         = 1.0f;    // Open to the sky.
+			float               lamp_k    = 1.0f;    // Lamps' share: off by day in the open.
 			if (weather) {
 				// Clouds take their share of the sky light where it is open.
 				const Shaded_point p{px, py, wz};
@@ -1788,6 +1791,12 @@ void Shaded_cpu::light_rows(
 				const float        c = o > 0.0f ? Shaded_cloud_cover(*weather, p) : 0.0f;
 				const float        s = 1.0f - params.cloud_shadows * o * c;
 				ambient_p            = ambient * s;
+				if (sun) {
+					// The sun's shade, as far as the clouds leave it.
+					const Shaded_sun_result sr = Shaded_sun_term(params, *weather, p, n, s);
+					ambient_p *= sr.level;
+					lamp_k = sr.lamp;
+				}
 				if (sky_out) {
 					sky_out[idx] = o <= 0.0f ? 0 : static_cast<uint8_t>(1 + std::lround(std::clamp(s, 0.0f, 1.0f) * 254.0f));
 				}
@@ -1862,7 +1871,8 @@ void Shaded_cpu::light_rows(
 				full += l.intensity * Shaded_falloff(d2 / r2) * (facing + (1.0f - facing) * ndotl);
 				sum += l.intensity * f * Shaded_falloff(d2 / r2) * (facing + (1.0f - facing) * ndotl);
 			}
-			float level = ambient_p + (1.0f - ambient_p) * (1.0f - std::exp(-sum * params.brightness * inv_soft));
+			const float lit_sum = sum * lamp_k;
+			float level = ambient_p + (1.0f - ambient_p) * (1.0f - std::exp(-lit_sum * params.brightness * inv_soft));
 			if (flash_map) {
 				// The flash lifts faces turned to it as far as its shadows
 				// let it through; a trace through a penumbra's last 1/32 is
@@ -2172,6 +2182,9 @@ Shaded_light::Shaded_light()
 	if (const char* hour = std::getenv("EXULT_SHADED_HOUR"); hour && *hour) {
 		pending_hour = std::clamp(std::atoi(hour), 0, 23);
 	}
+	if (const char* minute = std::getenv("EXULT_SHADED_MINUTE"); minute && *minute) {
+		pending_minute = std::clamp(std::atoi(minute), 0, 59);
+	}
 	if (const char* tele = std::getenv("EXULT_SHADED_TELEPORT"); tele && *tele) {
 		pending_teleport = std::sscanf(tele, "%d,%d,%d", &teleport_to[0], &teleport_to[1], &teleport_to[2]) == 3;
 		if (!pending_teleport) {
@@ -2272,6 +2285,20 @@ Shaded_light::Shaded_light()
 	env_percent("EXULT_SHADED_FOG", params.fog_density);
 	env_switch("EXULT_SHADED_LIGHTNING_SHADOWS", params.lightning_shadows);
 	env_switch("EXULT_SHADED_PRECIPITATION", params.precipitation);
+	// Sun overrides (percentages; EXULT_SHADED_SUN=0 is the look without the
+	// sun and daylight).
+	env_switch("EXULT_SHADED_SUN", params.sun);
+	env_percent("EXULT_SHADED_SUN_SHADE", params.sun_shade);
+	env_percent("EXULT_SHADED_SUN_INDOOR", params.sun_indoor);
+	env_percent("EXULT_SHADED_SUN_FACE", params.sun_face);
+	env_percent("EXULT_SHADED_SUN_BEAMS", params.sun_beams);
+	if (const char* v = std::getenv("EXULT_SHADED_SUN_REACH"); v && *v) {
+		params.day_reach = static_cast<float>(std::clamp(std::atoi(v), 0, 12));
+	}
+	params.sun_shade  = std::min(params.sun_shade, 1.0f);
+	params.sun_indoor = std::min(params.sun_indoor, 1.0f);
+	params.sun_face   = std::min(params.sun_face, 1.0f);
+	params.sun_beams  = std::min(params.sun_beams, 1.0f);
 	if (const char* flash = std::getenv("EXULT_SHADED_DUMP_FLASH"); flash && *flash) {
 		flash_dumps_left = std::max(std::atoi(flash), 0);
 	}
@@ -2432,6 +2459,18 @@ void Shaded_light::read_sliders() {
 	bool precipitation;
 	config->value(base + "weather/precipitation", precipitation, true);
 	params.precipitation = precipitation ? 1 : 0;
+	// Sun and daylight.
+	bool sun;
+	config->value(base + "sun/enabled", sun, true);
+	params.sun        = sun ? 1 : 0;
+	params.sun_shade  = std::min(percent("sun/shade", 22), 1.0f);
+	params.sun_indoor = std::min(percent("sun/indoor", 18), 1.0f);
+	params.sun_face   = std::min(percent("sun/face", 50), 1.0f);
+	params.sun_beams  = std::min(percent("sun/beams", 100), 1.0f);
+	sun_soft_config   = 0.5f * percent("sun/softness", 100);
+	params.sun_soft   = sun_soft_config;
+	config->value(base + "sun/reach", value, 5);
+	params.day_reach = static_cast<float>(std::clamp(value, 0, 12));
 }
 
 void Shaded_light::reload_sliders() {
@@ -2462,7 +2501,7 @@ void Shaded_light::run_debug_hooks() {
 		pending_hour   = -1;
 		Game_clock* clock = gwin->get_clock();
 		clock->set_hour(hour);
-		clock->set_minute(0);
+		clock->set_minute(pending_minute);
 		clock->set_ticks(0);
 		clock->reset_palette();
 		gwin->set_all_dirty();
@@ -2760,6 +2799,38 @@ void Shaded_light::gather_lights() {
 			}
 		}
 	}
+	// By day the lamps in the open, and those under a roof that is drawn,
+	// give no light (the sun's pass lights them off).  Lamps indoors with
+	// the roof hidden, and carried lights, stay.  It also leaves them out
+	// of the shadow pass, which is most of what daylight costs otherwise.
+	if (params.sun_active && params.sun_fade >= 0.9f) {
+		if (Shaded_grid* grid = Shaded_grid::active) {
+			grid->sync();
+			const Shaded_grid_volume& vol = grid->get_volume();
+			size_t                    kept = 0;
+			for (size_t i = 0; i < lights.size(); i++) {
+				const Shaded_light_record& rec = lights[i];
+				bool                       keep = (rec.flags & shaded_light_carried) != 0;
+				int                        lx = 0;
+				int                        ly = 0;
+				if (!keep && vol.size_x > 0 && vol.local(static_cast<int>(rec.x), static_cast<int>(rec.y), lx, ly)) {
+					const int sky = vol.sky[static_cast<size_t>(ly) * static_cast<size_t>(vol.size_x) + static_cast<size_t>(lx)];
+					keep = sky > 0 && rec.z < static_cast<float>(sky) && sky - 1 >= skip_lift;
+				}
+				if (keep) {
+					lights[kept]        = lights[i];
+					light_objects[kept] = light_objects[i];
+					light_sources[kept] = light_sources[i];
+					light_rows[kept]    = light_rows[i];
+					kept++;
+				}
+			}
+			lights.resize(kept);
+			light_objects.resize(kept);
+			light_sources.resize(kept);
+			light_rows.resize(kept);
+		}
+	}
 	// Hash of what the lighting depends on, positions to 1/16 tile.
 	uint64_t hash = 14695981039346656037ull;
 	for (const Shaded_light_record& rec : lights) {
@@ -2778,7 +2849,7 @@ void Shaded_light::gather_lights() {
  *  The sliders a lit frame depends on, stage 3's first, then the weather's.
  */
 
-std::array<float, 23> Shaded_light::slider_values() const {
+std::array<float, 37> Shaded_light::slider_values() const {
 	return {params.ambient,
 			params.brightness,
 			params.radius_scale,
@@ -2801,15 +2872,29 @@ std::array<float, 23> Shaded_light::slider_values() const {
 			params.fog_fade,
 			params.fog_scatter,
 			static_cast<float>(params.lightning_shadows),
-			static_cast<float>(params.precipitation)};
+			static_cast<float>(params.precipitation),
+			static_cast<float>(params.sun),
+			static_cast<float>(params.sun_active),
+			params.sun_shade,
+			params.sun_indoor,
+			params.sun_face,
+			params.sun_beams,
+			params.sun_x,
+			params.sun_y,
+			params.sun_z,
+			params.sun_k,
+			params.sun_fade,
+			params.sun_slope,
+			params.sun_soft,
+			params.day_reach};
 }
 
 bool Shaded_light::prepare_paint() {
 	if (!record_on && !lighting_on) {
 		return false;
 	}
-	if (shadows_wanted() || weather_wanted()) {
-		Shaded_grid::get();    // Turns itself on for the shadows and the weather.
+	if (shadows_wanted() || weather_wanted() || sun_wanted()) {
+		Shaded_grid::get();    // Turns itself on for the shadows, the weather and the sun.
 	}
 	// The self-test needs the game's palettes for its fog table checks.
 	if (weather_test && !weather_test_done && load_weather_refs()) {
@@ -2818,6 +2903,7 @@ bool Shaded_light::prepare_paint() {
 	}
 	run_debug_hooks();
 	load_table();
+	update_sun_clock();
 	gather_lights();
 	Game_window* gwin = Game_window::get_instance();
 	// A game loaded at night set its palette before there was a main actor,
@@ -2830,12 +2916,12 @@ bool Shaded_light::prepare_paint() {
 	const bool weather_changed = prepare_weather();
 	// The lighting of a partial paint must match the frame around it, so
 	// any change of what it depends on paints the whole game area.
-	const std::array<float, 23> sliders = slider_values();
+	const std::array<float, 37> sliders = slider_values();
 	const bool lights_changed = lit_active && (light_hash != lit_hash || sliders != lit_sliders || weather_changed);
 	// A change of the occlusion grid (a door opened) relights more than
 	// its own rectangle.
 	bool grid_changed = false;
-	if (lit_active && (shadows_wanted() || weather_wanted()) && Shaded_grid::active) {
+	if (lit_active && (shadows_wanted() || weather_wanted() || sun_wanted()) && Shaded_grid::active) {
 		const Clock::time_point sync_start = timing ? Clock::now() : Clock::time_point();
 		Shaded_grid::active->sync();
 		if (timing) {
@@ -3016,10 +3102,85 @@ bool Shaded_light::prepare_weather() {
 	// Rain and snow are relit as they are painted.
 	const bool particles = params.precipitation && (in.rain || in.snow);
 	const bool terms      = !set.clouds.empty() || params.overcast > 0.0f || params.fog || flash || particles;
-	params.weather_active = weather_wanted() && terms ? 1 : 0;
+	finish_sun_params();
+	params.weather_active = (weather_wanted() && terms) || params.sun_active ? 1 : 0;
 	return changed || fog_moved || (lit_active && cloud_hash != lit_cloud_hash);
 }
 
+/*
+ *  The sun for this paint, from the clock: up between 06:00 and 20:00 (the
+ *  hours the clock shows the day palette), outside a dungeon.  Its
+ *  direction and strength are worked out once per game minute: the sun
+ *  rises in the east, is highest in the north at 13:00 (shadows fall
+ *  towards the viewer) and sets in the west; its elevation follows its
+ *  height (0.17 + 0.71 sin of the hour angle, in radians).  The idea
+ *  of the direction model and of fading the shade in after dawn is
+ *  XCAST3D's (Quest of the Companions), written afresh for the grid.
+ */
+void Shaded_light::update_sun_clock() {
+	params.sun_active = 0;
+	sun_lit           = false;
+	if (sun_wanted()) {
+		Game_window* gwin = Game_window::get_instance();
+		const Game_clock* clock = gwin->get_clock();
+		if (clock && gwin->get_main_actor() && !gwin->is_in_exult_menu() && !gwin->is_in_dungeon()) {
+			const int hour   = clock->get_hour();
+			const int minute = clock->get_minute();
+			const int key    = hour * 60 + minute;
+			if (key != sun_minute) {
+				sun_minute = key;
+				sun_hour   = static_cast<float>(key) / 60.0f;
+				constexpr float rise = 6.0f;
+				constexpr float set  = 20.0f;
+				constexpr float pi   = 3.14159265358979f;
+				const float     a    = pi * (sun_hour - rise) / (set - rise);
+				sun_up               = sun_hour >= rise && sun_hour <= set ? std::sin(a) : 0.0f;
+				if (sun_up > 0.0f) {
+					const float ux = std::cos(a);
+					const float uy = -std::sin(a);
+					const float e  = 0.17f + 0.71f * sun_up;
+					params.sun_x     = std::cos(e) * ux;
+					params.sun_y     = std::cos(e) * uy;
+					params.sun_z     = std::sin(e) / params.tiles_per_lift;
+					params.sun_slope = std::tan(e) / params.tiles_per_lift;
+					params.sun_fade  = std::min(1.0f, sun_up * 4.0f);
+				} else {
+					params.sun_fade = 0.0f;
+				}
+			}
+			sun_lit = sun_up > 0.04f;
+		}
+	}
+	params.sun_active = sun_lit ? 1 : 0;
+	if (sun_lit != last_sun_lit) {
+		// DAY became lightable (or stopped being so): filter the palette
+		// again and light the whole area afresh.
+		last_sun_lit = sun_lit;
+		need_full    = true;
+		Palette* pal = Game_window::get_instance()->get_pal();
+		if (pal && !pal->is_faded_out()) {
+			pal->apply(false);
+		}
+	}
+}
+/*
+ *  The sun's strength now: its fade by the hour, less what overcast and fog
+ *  take (overcast_soften of it under the overcast palette; fog nearly all),
+ *  and its penumbra, widened by overcast as the lamps' shadows are.
+ */
+void Shaded_light::finish_sun_params() {
+	if (!params.sun_active) {
+		params.sun_k = 0.0f;
+		return;
+	}
+	const float soften = params.overcast_soften * overcast_target;
+	float       k      = params.sun_fade * (1.0f - soften);
+	if (params.fog) {
+		k *= 0.15f;
+	}
+	params.sun_k    = k;
+	params.sun_soft = sun_soft_config * (1.0f + 2.0f * soften);
+}
 /*
  *  Before the light pass of a paint with weather terms: the grid and the
  *  sky map over it (rebuilt when the grid changed or moved).
@@ -3061,6 +3222,33 @@ void Shaded_light::prepare_weather_pass() {
 		set.open_w  = 0;
 		set.open_h  = 0;
 		open_generation = -1;
+	}
+	// The sun's shadow ceilings and the daylight map, over the same
+	// columns, again when the grid changed or the sun's direction did (once
+	// per game minute).
+	set.sun_on = false;
+	if (params.sun_active && vol && set.open_w > 0) {
+		const std::array<int, 9> built{vol->origin_tx, vol->origin_ty, vol->size_x, vol->size_y, grid->get_params().generation,
+									   static_cast<int>(std::lround(params.sun_x * 1000.0f)),
+									   static_cast<int>(std::lround(params.sun_y * 1000.0f)),
+									   static_cast<int>(std::lround(params.sun_slope * 1000.0f)),
+									   static_cast<int>(std::lround(params.day_reach * 100.0f))};
+		const size_t columns = static_cast<size_t>(vol->size_x) * static_cast<size_t>(vol->size_y);
+		if (!sun_built_valid || built != sun_built || set.sun_ceiling.size() != columns) {
+			const Clock::time_point start = Clock::now();
+			const float             len   = std::max(std::hypot(params.sun_x, params.sun_y), 1e-4f);
+			Shaded_cpu::build_sun_ceiling(
+					*vol, params.sun_x / len, params.sun_y / len, params.sun_slope, 40, set.sun_ceiling, set.sun_canopy,
+					set.sun_canopy_op);
+			Shaded_cpu::build_day_open(*vol, params.day_reach, 2.0f, set.day_open);
+			sun_built       = built;
+			sun_built_valid = true;
+			sun_builds++;
+			sun_prep_us += std::chrono::duration<double, std::micro>(Clock::now() - start).count();
+		}
+		set.sun_on = true;
+	} else {
+		sun_built_valid = false;
 	}
 	// The drops and flakes painted this paint.
 	set.particles  = params.precipitation ? buffers.particle_mask.data() : nullptr;
@@ -3227,6 +3415,9 @@ bool Shaded_light::lightable_palette(int n) {
 		return true;
 	}
 	const Shaded_light& sl = get();
+	if (sl.sun_lit && (n == PALETTE_DAY || n == PALETTE_OVERCAST)) {
+		return true;
+	}
 	return sl.weather_wanted() && (n == PALETTE_OVERCAST || (n == PALETTE_DAY && sl.weather_present));
 }
 
@@ -3401,7 +3592,9 @@ bool Shaded_light::filter_palette(
 			gwin->set_all_dirty();
 		}
 	}
-	if (params.ambient_level >= 0.999f && !weather_lit) {
+	// The sun's shade and daylight light DAY and OVERCAST too.
+	const bool sun_day = sun_lit && (palnum == PALETTE_DAY || palnum == PALETTE_OVERCAST || transition);
+	if (params.ambient_level >= 0.999f && !weather_lit && !sun_day) {
 		set_lit(false);
 		return false;
 	}
@@ -4657,9 +4850,22 @@ void Shaded_light::check_weather(const Shaded_rect& r) {
 		return;
 	}
 	// Covered pixels (no sky, no flash) must light exactly as without the
-	// weather: one thread, the same shadows.
+	// weather: one thread, the same shadows.  With the sun on, the sun's
+	// own terms are part of both (it is not weather): the plain pass keeps
+	// them over the same sky map and has the weather's terms off.
 	std::vector<uint8_t> plain(buffers.light_levels);
-	light_pass(r, plain.data(), false, nullptr, shadow_set_on ? &shadow_set : nullptr, nullptr);
+	if (params.sun_active) {
+		const Shaded_light_params saved = params;
+		params.cloud_shadows = 0.0f;
+		params.overcast      = 0.0f;
+		params.fog           = 0;
+		params.flash         = 0.0f;
+		params.precipitation = 0;
+		light_pass(r, plain.data(), false, nullptr, shadow_set_on ? &shadow_set : nullptr, nullptr, weather_set.get());
+		params = saved;
+	} else {
+		light_pass(r, plain.data(), false, nullptr, shadow_set_on ? &shadow_set : nullptr, nullptr);
+	}
 	long   outdoor = 0, covered = 0, violations = 0, fogged = 0;
 	long   flash_lit = 0, flash_shadowed = 0, flash_covered = 0;    // Faces turned to the flash.
 	double sky_sum = 0;
@@ -4710,6 +4916,15 @@ void Shaded_light::check_weather(const Shaded_rect& r) {
 	}
 	out << "weather precipitation " << (in.rain ? "rain" : in.snow ? "snow" : "none") << " ("
 		<< (params.precipitation ? "on" : "off") << ") particle px " << particles << " relit " << relit << "\n";
+	if (params.sun_active) {
+		out << "sun on hour " << sun_hour << " up " << sun_up << " dir " << params.sun_x << "," << params.sun_y << ","
+			<< params.sun_z << " slope " << params.sun_slope << " fade " << params.sun_fade << " k " << params.sun_k
+			<< " shade " << params.sun_shade << " indoor " << params.sun_indoor << " face " << params.sun_face
+			<< " beams " << params.sun_beams << " soft " << params.sun_soft << " reach " << params.day_reach
+			<< " ceilings " << set.sun_ceiling.size() << " builds " << sun_builds << " build_us " << sun_prep_us << "\n";
+	} else {
+		out << "sun off (" << (sun_wanted() ? "not up or in a dungeon" : "disabled") << ")\n";
+	}
 	out << "weather outdoor mean sky " << (outdoor > 0 ? sky_sum / static_cast<double>(outdoor) : 0.0) << "\n"
 		<< "check weather indoor violations " << violations << " (outdoor px " << outdoor << ", covered px " << covered
 		<< ")\n";
