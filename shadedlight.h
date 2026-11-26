@@ -44,6 +44,7 @@
 #include <cstdint>
 #include <functional>
 #include <iosfwd>
+#include <limits>
 #include <map>
 #include <memory>
 #include <string>
@@ -273,6 +274,8 @@ constexpr int32_t shaded_light_covered = 16;
 // Reserved for the sun and moon (never set yet): x, y and z then hold the
 // direction towards the light, in tiles, tiles and lifts per unit.
 constexpr int32_t shaded_light_directional = 8;
+// The colour of a light without its own (shaded_light.txt's 255/214/170).
+constexpr uint32_t shaded_default_tint = 0xffd6aau;
 // Most lights in one paint.
 constexpr int shaded_max_lights = 256;
 
@@ -354,6 +357,20 @@ constexpr Shaded_light_entry Shaded_default_magic(int kind) {
 constexpr Shaded_light_entry Shaded_default_light(int b) {
 	return Shaded_light_entry{3 + b, 50 + 10 * b, 255, 214, 170, -1, 0};
 }
+// A field of a lights row left blank: it takes the value
+// Shaded_default_light gives for the light's own light_data brightness.
+constexpr int shaded_light_inherit = std::numeric_limits<int>::min();
+// The row for a light of light_data brightness b: row's fields, with the
+// blank ones from the formula, clamped as the reader clamps them.
+constexpr Shaded_light_entry Shaded_resolve_light(const Shaded_light_entry& row, int b) {
+	const Shaded_light_entry def = Shaded_default_light(b);
+	auto pick = [](int v, int d) {
+		return v == shaded_light_inherit ? d : v;
+	};
+	return Shaded_light_entry{pick(row.radius, def.radius), pick(row.brightness, def.brightness), pick(row.red, def.red),
+							  pick(row.green, def.green), pick(row.blue, def.blue),     pick(row.height, def.height),
+							  pick(row.flags, def.flags)};
+}
 
 // Where a light's row came from.
 enum class Shaded_light_row : uint8_t {
@@ -392,6 +409,8 @@ struct Shaded_scene_buffers {
 	// Octahedral unit normal (Shaded_encode_normal), where facing is
 	// shaded_face_rounded; 0 elsewhere.  GPU format RG8_SNORM.
 	std::vector<uint16_t>             normal_map;
+	// Mean lamp colour per pixel (0x00rrggbb), for the full-colour overlay.
+	std::vector<uint32_t>             light_tint;
 	std::vector<Shaded_object_record> objects;
 	std::vector<uint8_t>              object_opacity;    // Per object: screen-space shadow opacity.
 	std::vector<Shaded_object_volume> object_volumes;    // Per object: fitted rounded volume.
@@ -995,12 +1014,15 @@ namespace Shaded_cpu {
 	// With weather, the ambient (sky) term of a recorded pixel is dimmed
 	// by the clouds over it as far as it is open to the sky, a lightning
 	// flash lifts the faces it reaches, and wout's buffers (those not
-	// null) get the weather outputs.
+	// null) get the weather outputs.  tint_out (if not null) gets the mean
+	// colour of the lamp light at the pixel, weighted by what each light
+	// adds, as 0x00rrggbb (shaded_default_tint where no lamp reaches).
 	void light_rows(
 			const Shaded_scene_buffers& buf, const Shaded_light_params& params, const Shaded_light_record* lights,
 			const uint32_t* bin_offsets, const uint16_t* bin_lights, const Shaded_rect& r, int y0, int y1,
 			uint8_t* levels, const Shaded_shadow_set* shadows = nullptr, uint8_t* shadow_out = nullptr,
-			const Shaded_weather_set* weather = nullptr, const Shaded_weather_out* wout = nullptr);
+			const Shaded_weather_set* weather = nullptr, const Shaded_weather_out* wout = nullptr,
+			uint32_t* tint_out = nullptr);
 	// Relight rows [y0, y1) of r of an 8-bit frame (indexed like the
 	// buffers): frame[i] = remap[levels[i] * 256 + frame[i]].
 	void apply_light_rows(
@@ -1027,13 +1049,41 @@ namespace Shaded_cpu {
 	// Index in [first, last] of the colour nearest lab, by CIELAB distance
 	// with lightness weighted 4: pal_lab holds colour_lab of each index.
 	int nearest_colour_lab(const float (*pal_lab)[3], const float lab[3], int first, int last);
+	// A light stop's colours turned warm: each of colours 1..shaded_last_lit_index
+	// keeps the stop's luminance and moves (by warmth, 0..1) from the stop's
+	// own hue towards DAY's colour under an amber light.  SI's CANDLE,
+	// SINGLE_LIGHT and MANY_LIGHTS palettes are pink for neutral stone, and
+	// a ramp from the blue-teal night into pink passes through magenta.
+	void warm_stop(const uint8_t* stop768, const uint8_t* day768, float warmth, uint8_t* out768);
 	// Remap tables (shaded_remap_size bytes) from the ambient palette and the
 	// reference palettes (DAY, CANDLE, SINGLE_LIGHT, MANY_LIGHTS), and the
 	// palette to display with them.  Sets params.ambient_level; the stops
 	// go into ramp if it is not null.
 	void build_remap(
 			const uint8_t* ambient768, const uint8_t* const refs[4], Shaded_light_params& params, uint8_t* remap,
-			uint8_t* displayed768, Shaded_ramp* ramp);
+			uint8_t* displayed768, Shaded_ramp* ramp, float warmth = 0.0f);
+	// The full-colour ramp, for the light overlay: per (level, index) the
+	// multiply (2 * scene * mul / 255, 128 = unchanged) and the additive
+	// texel, as ARGB, that turn DAY's colour into the ramp's colour with no
+	// palette snap.  The stops are black, the night (the 8-bit remap's
+	// ambient row, mixed 45 % with the ambient palette's own colours, as in
+	// mock-up G), the warmed CANDLE palette where the light pool is (pool =
+	// its place between the ambient and full light) and DAY.
+	// shaded_remap_size entries each.
+	void build_colour_ramp(
+			const uint8_t* ambient768, const uint8_t* const refs[4], const Shaded_light_params& params, float pool,
+			float warmth, const uint8_t* remap, uint32_t* mul, uint32_t* add);
+	// Overlay texels for rows y0..y1 of r: the ramp texel for each pixel's
+	// level and unlit index; where the lamp light is not the table's
+	// default colour (tint, may be null), the lamps' share above the
+	// ambient row amb_q takes that colour; then the fog in front of it
+	// (fog_codes may be null).  fog_rgb is the fog colour 0..255; out_* are
+	// gw wide.  The unlit pixels are copied to world for the shown check.
+	void colour_rows(
+			const Shaded_scene_buffers& buf, const Shaded_rect& r, int y0, int y1, const uint8_t* levels,
+			const unsigned char* frame, const uint32_t* mul_tab, const uint32_t* add_tab, const uint32_t* tint,
+			int amb_q, const uint8_t* day768, const uint8_t* fog_codes, const int* fog_rgb, int gw, uint32_t* out_mul,
+			uint32_t* out_add, uint8_t* world);
 }    // namespace Shaded_cpu
 
 // Which parts of the shadows are traced (EXULT_SHADED_SHADOW_PARTS).
@@ -1127,6 +1177,16 @@ public:
 	void end_paint(Image_window8& win, bool full);
 	// After the sprite effects: the light pass, debug views and dumps.
 	void finish_paint(Image_window8& win, bool full);
+	// At the end of Game_window::paint: the rows the paint lit go to the
+	// full-colour overlay at the next show.
+	void finish_overlay(Image_window8& win);
+	// Image_window::show calls this first while the overlay is on: what was
+	// drawn over the world (text, a map) stays unlit; then the overlay is
+	// sent.  after_show reads back test screens (EXULT_SHADED_SCREEN_EVERY).
+	void before_show();
+	void after_show();
+	// A paint with no lit world (no main actor): no overlay over it.
+	void drop_overlay(Image_window8& win);
 	// After a world paint outside Game_window::paint (crystal balls, save
 	// thumbnails): while lighting is active, relight that rectangle (game
 	// pixels) at the ambient level, as the palette shown expects.
@@ -1247,6 +1307,42 @@ private:
 	std::vector<unsigned char>         ambient_pal;    // 768: A.
 	std::vector<unsigned char>         displayed_pal;    // 768: B'.
 	std::vector<uint8_t>               remap;    // shaded_remap_size.
+	// The full-colour light overlay (see Shaded_cpu::build_colour_ramp).
+	bool                  colour_option = true;     // config colour.
+	int                   colour_env    = -1;       // EXULT_SHADED_COLOUR: 0 off, 1 on, 2 forced without a renderer.
+	float                 colour_warmth = 0.5f;     // How warm the lamp colour is (1 = amber, 0 = the game's palette).
+	float                 colour_pool   = 0.55f;    // Where the candle colours sit between ambient and full light.
+	float                 colour_tab_warmth = -1;
+	float                 colour_tab_pool = -1;     // colour_pool of the tables.
+	bool                  colour_mode   = false;    // Lighting is shown by the overlay, not by the remap.
+	bool                  overlay_sent   = false;   // The window has the whole overlay.
+	int                   ov_send_y0 = 0, ov_send_y1 = 0;    // Rows to send at the next show.
+	bool                  colour_resend  = false;   // The overlay moved (a scroll): send all of it.
+	bool                  colour_painted = false;   // This paint made overlay texels.
+	std::vector<uint32_t> colour_mul_tab;           // shaded_remap_size.
+	std::vector<uint32_t> colour_add_tab;
+	std::vector<uint32_t> ov_mul;                   // Game area, as sent to the window.
+	std::vector<uint32_t> ov_add;
+	std::vector<uint8_t>  ov_world;                 // The unlit world the overlay was made for.
+	int                   ov_w = 0, ov_h = 0;
+	void shift_overlay(int dx, int dy);
+	bool screen_dumps = false;    // EXULT_SHADED_DUMP_SCREEN.
+	int  screen_every = 0;        // EXULT_SHADED_SCREEN_EVERY (ms).
+	int  screens_taken = 0;
+	std::chrono::steady_clock::time_point last_screen{};
+	int  screen_dump  = -1;       // Dump whose screen is read back next paint.
+	void dump_screen(int number);
+	// Colour mode follows the options and the window; true if it changed.
+	bool update_colour_mode();
+	// Fills the overlay for a band; null outside the colour pass.
+	struct Colour_target {
+		const unsigned char* frame;
+		int                  fog_rgb[3];
+		bool                 fog;
+	};
+	const Colour_target* colour_target = nullptr;
+	uint32_t*            tint_target   = nullptr;    // light_pass's tint_out.
+	int                  colour_amb_q  = 0;          // Ambient row of the colour ramp.
 	Shaded_ramp                        ramp;
 	std::vector<std::vector<uint8_t>>  ref_pals;    // shaded_ref_palettes, 768 each.
 	std::string                        refs_game;    // Game the refs were read for.
@@ -1479,6 +1575,9 @@ private:
 	long long         verify_paints      = 0;
 	long long         verify_bad_paints  = 0;
 	long long         verify_bad_px      = 0;
+	long long         verify_colour_bad_px = 0;    // Overlay texels that differ from a fresh pass's.
+	long long         overlay_shows        = 0;    // before_show calls, and their time.
+	double            overlay_show_us      = 0;
 	long long         verify_skipped     = 0;
 	long long         reuse_paints       = 0;    // Lit paints that kept levels,
 	double            reuse_px_fresh     = 0;    // the pixels they lit afresh,

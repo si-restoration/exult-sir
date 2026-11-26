@@ -7,6 +7,7 @@
 /*
 Copyright (C) 1998 Jeffrey S. Freedman
 Copyright (C) 2000-2022 The Exult Team
+Portions from Quest of the Companions (xcast3d/exult-co-op-mode), GPL-2.0
 
 This library is free software; you can redistribute it and/or
 modify it under the terms of the GNU Library General Public
@@ -31,6 +32,7 @@ Boston, MA  02111-1307, USA.
 #include "ignore_unused_variable_warning.h"
 #include "imagebuf.h"
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -405,6 +407,21 @@ protected:
 	SDL_Surface* inter_surface;    // Post scaled/pre stretch surface  (960x600) - can be null if there is no stretching being dome
 	SDL_Surface* draw_surface;     // Pre scaled surface               (320x200) - Never null
 
+	// The full-colour light overlay (shaded light): a multiply texture and
+	// an additive texture drawn over the scene after the scaler, so the
+	// light can be any colour instead of a palette entry.
+	// Portions adapted from Quest of the Companions (xcast3d/exult-co-op-mode), GPL-2.0.
+	struct SDL_Texture* light_texture = nullptr;    // result = 2 * scene * texel / 255.
+	struct SDL_Texture* glow_texture  = nullptr;    // Added on top.
+	bool                light_on      = false;
+	bool                glow_on       = false;
+	bool                light_mul2    = false;    // The doubling blend mode works.
+	int                 light_w = 0, light_h = 0;    // Overlay size in game pixels.
+	int                 light_gx = 0, light_gy = 0;    // Game position of its top left.
+	std::function<void()> pre_show;
+	std::function<void()> post_show;
+	void                render_light_overlay();
+	void                free_light_texture();
 	// Layers composited on top of the main image (see class Layer).
 	std::vector<std::unique_ptr<Layer>> layers;
 	// Scaling layers can need upto 3 dst32 surfaces. Layer dst32 Surfaces aren't persistent and shared between all layers as needed
@@ -619,6 +636,27 @@ public:
 	// Set title.
 	void set_title(const char* title);
 
+	// Send rows row0..row1 of the light overlay (w x h ARGB, mul 128 = no
+	// change, add 0 = none) to the renderer.  False without a renderer.
+	bool set_light_overlay(const uint32* mul, const uint32* add, int gx, int gy, int w, int h, int row0, int row1);
+	void clear_light_overlay() {
+		light_on = false;
+		glow_on  = false;
+	}
+	// Called at the start of every show while set (the light overlay
+	// checks what was drawn over the world).
+	void set_pre_show(std::function<void()> hook) {
+		pre_show = std::move(hook);
+	}
+	// Called at the end of every show while set (test read-backs).
+	void set_post_show(std::function<void()> hook) {
+		post_show = std::move(hook);
+	}
+	// What the renderer last presented, as 8-bit RGB rows (w x h).
+	bool read_screen(std::vector<unsigned char>& rgb, int& w, int& h);
+	bool has_renderer() const {
+		return screen_renderer != nullptr;
+	}
 	Image_buffer* get_ibuf() {
 		return ibuf;
 	}

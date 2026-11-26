@@ -1,10 +1,10 @@
 #	Exult shaded light table for Black Gate.
 #
 #	How each light source lights the world when the shaded light renderer
-#	(config/video/shaded_light/enabled) is on.  Rows apply to objects the
-#	engine treats as lights, that is shapes with a light_data row in
-#	shape_info.txt (or the light flag), and to shapes with a row here but
-#	no light_data, which only shaded light then counts as lights.
+#	(config/video/shaded_light/enabled) is on.  Rows only apply to objects
+#	the engine already treats as lights, that is shapes with a light_data
+#	row in shape_info.txt (or the light flag); a mod makes a new light
+#	source there, as before, and tunes it here.
 #
 #	A mod overrides rows with its own <PATCH>/shaded_light.txt, which only
 #	needs the rows it changes (same shape and frame replace a row here).
@@ -17,90 +17,99 @@
 #	radius		In tiles.
 #	brightness	Percent; 100 = a torch.
 #	red/green/blue	Colour of the light, 0-255.  Only used where the
-#				renderer can show colour; the 8-bit path uses
-#				brightness only.
+#				renderer can show colour (the full-colour light
+#				overlay); the 8-bit path uses brightness only.
 #	height		Lifts above the object's base; -1 = top of its 3D box.
 #	flags		Sum of: 1 = area light (even light over its radius,
 #				horizontal distance only, lighting surfaces from its
 #				lift to 6 lifts above), 2 = off (the shape gives no
 #				shaded light).
 #
-#	Lights without a row use the formula these rows were made with, where
-#	b is the shape's light_data brightness (candle 1, torch 5, lamp 7):
+#	Every light starts from the formula, where b is the shape's
+#	light_data brightness for that frame (candle 1, torch 5, lamp 7):
 #		radius 3 + b, brightness 50 + 10 * b, colour 255/214/170,
 #		height -1, flags 0.
+#	Lights without a row use it as it is.  In a row, a field left blank
+#	(nothing between its slashes) keeps the formula's value, and so do
+#	fields left out at the end of the row; only the fields a row sets
+#	replace it.  -1 is a value, not "blank": it means -1 where the field
+#	allows it (frame, height).  So
+#		:526/-1
+#	is a lamp lit by the formula, and
+#		:1013/-1//140/217/235/255
+#	keeps the formula's radius, sets brightness 140 and a cool colour.
+#	The Radius and Brightness sliders scale every light, rows included.
 #
 %%section version
 :1
 %%endsection
 %%section lights
 #	Lightning.
-:179/-1/8/100/255/214/170/-1/0
+:179/-1
 #	Light.
-:198/-1/6/80/255/214/170/-1/0
+:198/-1
 #	Lit light source.
-:338/2/5/70/255/214/170/-1/0
-:338/3/8/100/255/214/170/-1/0
-:338/4/8/100/255/214/170/-1/0
-:338/5/8/100/255/214/170/-1/0
-:338/7/5/70/255/214/170/-1/0
-:338/8/5/70/255/214/170/-1/0
-:338/9/5/70/255/214/170/-1/0
-:338/10/8/100/255/214/170/-1/0
-:338/11/8/100/255/214/170/-1/0
-:338/12/5/70/255/214/170/-1/0
-:338/-1/4/60/255/214/170/-1/0
+:338/2
+:338/3
+:338/4
+:338/5
+:338/7
+:338/8
+:338/9
+:338/10
+:338/11
+:338/12
+:338/-1
 #	Lit sconce.
-:435/-1/8/100/255/214/170/-1/0
+:435/-1
 #	Lit lamp.
-:526/-1/10/120/255/214/170/-1/0
-#	Lamp post (street lamp).  No light_data row, so only shaded light
-#	counts it; the classic palette does not.
-:889/-1/8/100/255/214/170/-1/0
+:526/-1
+#	Lamp post (street lamp).
+:889/-1
 #	Fire sword.
-:551/-1/8/100/255/214/170/-1/0
+:551/-1
 #	Firedoom staff.
-:553/-1/8/100/255/214/170/-1/0
+:553/-1
 #	Lit torch.
-:701/-1/8/100/255/214/170/-1/0
+:701/-1
 #	Firepit.
-:739/1/5/70/255/214/170/-1/0
-:739/2/7/90/255/214/170/-1/0
-:739/3/9/110/255/214/170/-1/0
-:739/5/5/70/255/214/170/-1/0
-:739/6/7/90/255/214/170/-1/0
-:739/7/9/110/255/214/170/-1/0
+:739/1
+:739/2
+:739/3
+:739/5
+:739/6
+:739/7
 #	Flaming oil.
-:782/-1/8/100/255/214/170/-1/0
+:782/-1
 #	Campfire.
-:825/-1/10/120/255/214/170/-1/0
+:825/-1
 #	Not original light sources:
 #	Laboratory burner.
-:307/1/4/60/255/214/170/-1/0
+:307/1
 #	Lightning whip.
-:549/-1/8/100/255/214/170/-1/0
+:549/-1
 #	Stove.
-:664/1/4/60/255/214/170/-1/0
+:664/1
 #	Sword blank.
-:668/1/4/60/255/214/170/-1/0
-:668/2/4/60/255/214/170/-1/0
-:668/3/5/70/255/214/170/-1/0
-:668/4/6/80/255/214/170/-1/0
+:668/1
+:668/2
+:668/3
+:668/4
 #	Baking hearth.
-:831/-1/5/70/255/214/170/-1/0
+:831/-1
 #	Moongates.
-:157/-1/4/60/255/214/170/-1/0
-:776/-1/4/60/255/214/170/-1/0
-:777/-1/4/60/255/214/170/-1/0
-:779/-1/4/60/255/214/170/-1/0
+:157/-1
+:776/-1
+:777/-1
+:779/-1
 #	FoV mirror.
-:848/3/4/60/255/214/170/-1/0
-:848/4/4/60/255/214/170/-1/0
-:848/5/4/60/255/214/170/-1/0
-:848/6/4/60/255/214/170/-1/0
-:848/7/4/60/255/214/170/-1/0
-:848/8/4/60/255/214/170/-1/0
-:848/9/4/60/255/214/170/-1/0
+:848/3
+:848/4
+:848/5
+:848/6
+:848/7
+:848/8
+:848/9
 #	Hidden light circles: none confirmed yet.  An area row (flags 1, e.g.
 #	radius 8, brightness 35) belongs only to a light whose object paints no
 #	pixels.  Shape 336 ("light source") is the unlit candle, not a light;

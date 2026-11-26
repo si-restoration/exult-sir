@@ -380,6 +380,7 @@ void Game_window::paint(
 		Shaded_light::get().end_paint(*win, full_paint);
 	} else {
 		win->fill8(0);
+		Shaded_light::get().drop_overlay(*win);
 	}
 
 	effects->paint();    // Draw sprites.
@@ -433,6 +434,10 @@ void Game_window::paint(
 				Shaded_light::get().lighting_enabled() ? 0 : carried_light + light_sources, in_dungeon);
 	}
 
+	if (main_actor) {
+		// Gumps and text stay unlit under the full-colour light overlay.
+		Shaded_light::get().finish_overlay(*win);
+	}
 	win->EndPaintIntoGuardBand();
 	win->clear_clip();
 }

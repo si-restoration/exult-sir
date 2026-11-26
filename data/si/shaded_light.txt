@@ -17,92 +17,102 @@
 #	radius		In tiles.
 #	brightness	Percent; 100 = a torch.
 #	red/green/blue	Colour of the light, 0-255.  Only used where the
-#				renderer can show colour; the 8-bit path uses
-#				brightness only.
+#				renderer can show colour (the full-colour light
+#				overlay); the 8-bit path uses brightness only.
 #	height		Lifts above the object's base; -1 = top of its 3D box.
 #	flags		Sum of: 1 = area light (even light over its radius,
 #				horizontal distance only, lighting surfaces from its
 #				lift to 6 lifts above), 2 = off (the shape gives no
 #				shaded light).
 #
-#	Lights without a row use the formula these rows were made with, where
-#	b is the shape's light_data brightness (candle 1, torch 5, lamp 7):
+#	Every light starts from the formula, where b is the shape's
+#	light_data brightness for that frame (candle 1, torch 5, lamp 7):
 #		radius 3 + b, brightness 50 + 10 * b, colour 255/214/170,
 #		height -1, flags 0.
+#	Lights without a row use it as it is.  In a row, a field left blank
+#	(nothing between its slashes) keeps the formula's value, and so do
+#	fields left out at the end of the row; only the fields a row sets
+#	replace it.  -1 is a value, not "blank": it means -1 where the field
+#	allows it (frame, height).  So
+#		:526/-1
+#	is a lamp lit by the formula, and
+#		:1013/-1//140/217/235/255
+#	keeps the formula's radius, sets brightness 140 and a cool colour.
+#	The Radius and Brightness sliders scale every light, rows included.
 #
 %%section version
 :1
 %%endsection
 %%section lights
 #	Light.
-:198/-1/6/80/255/214/170/-1/0
+:198/-1
 #	Fire.
-:289/-1/10/120/255/214/170/-1/0
+:289/-1
 #	Lit light source.
-:338/2/5/70/255/214/170/-1/0
-:338/3/8/100/255/214/170/-1/0
-:338/4/8/100/255/214/170/-1/0
-:338/5/8/100/255/214/170/-1/0
-:338/7/5/70/255/214/170/-1/0
-:338/8/5/70/255/214/170/-1/0
-:338/9/5/70/255/214/170/-1/0
-:338/10/8/100/255/214/170/-1/0
-:338/11/8/100/255/214/170/-1/0
-:338/12/5/70/255/214/170/-1/0
-:338/-1/4/60/255/214/170/-1/0
+:338/2
+:338/3
+:338/4
+:338/5
+:338/7
+:338/8
+:338/9
+:338/10
+:338/11
+:338/12
+:338/-1
 #	Lit sconce.
-:435/-1/8/100/255/214/170/-1/0
+:435/-1
 #	Lit lamp.
-:526/-1/10/120/255/214/170/-1/0
+:526/-1
 #	Lightning whip.
-:549/-1/8/100/255/214/170/-1/0
+:549/-1
 #	Fire sword.
-:551/-1/8/100/255/214/170/-1/0
+:551/-1
 #	Firedoom staff.
-:553/-1/8/100/255/214/170/-1/0
+:553/-1
 #	Lit torch.
-:701/-1/8/100/255/214/170/-1/0
+:701/-1
 #	Firepit.
-:739/1/5/70/255/214/170/-1/0
-:739/2/7/90/255/214/170/-1/0
-:739/3/9/110/255/214/170/-1/0
+:739/1
+:739/2
+:739/3
 #	Flaming oil.
-:782/-1/8/100/255/214/170/-1/0
+:782/-1
 #	Campfire.
-:796/-1/10/120/255/214/170/-1/0
+:796/-1
 #	Campfire.
-:825/-1/10/120/255/214/170/-1/0
+:825/-1
 #	Firedoom staff.
-:926/-1/8/100/255/214/170/-1/0
+:926/-1
 #	Burning urn.
-:998/-1/10/120/255/214/170/-1/0
+:998/-1
 #	Helm of light, when not being worn.
-:1013/-1/8/140/217/235/255/-1/0
+:1013/-1//140/217/235/255
 #	Not original light sources:
 #	Flame thrower trap.
-:159/1/6/80/255/214/170/-1/0
-:159/2/6/80/255/214/170/-1/0
-:159/3/10/120/255/214/170/-1/0
-:159/4/8/100/255/214/170/-1/0
-:159/5/8/100/255/214/170/-1/0
-:159/6/8/100/255/214/170/-1/0
-:159/7/8/100/255/214/170/-1/0
-:159/8/8/100/255/214/170/-1/0
-:159/9/8/100/255/214/170/-1/0
-:159/10/8/100/255/214/170/-1/0
-:159/11/8/100/255/214/170/-1/0
-:159/12/10/120/255/214/170/-1/0
-:159/13/6/80/255/214/170/-1/0
-:159/14/6/80/255/214/170/-1/0
-:159/15/6/80/255/214/170/-1/0
+:159/1
+:159/2
+:159/3
+:159/4
+:159/5
+:159/6
+:159/7
+:159/8
+:159/9
+:159/10
+:159/11
+:159/12
+:159/13
+:159/14
+:159/15
 #	Phoenix egg.
-:649/1/4/60/255/214/170/-1/0
+:649/1
 #	Stove.
-:664/1/4/60/255/214/170/-1/0
+:664/1
 #	Baking hearth.
-:831/-1/4/60/255/214/170/-1/0
+:831/-1
 #	Moongate.
-:864/-1/4/60/255/214/170/-1/0
+:864/-1
 #	Hidden light circles: none confirmed yet.  An area row (flags 1, e.g.
 #	radius 8, brightness 35) belongs only to a light whose object paints no
 #	pixels.  Shape 336 ("light source") is the unlit candle, not a light;

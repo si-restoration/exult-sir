@@ -7,6 +7,7 @@
 /*
 Copyright (C) 1998 Jeffrey S. Freedman
 Copyright (C) 2000-2022 The Exult Team
+Portions from Quest of the Companions (xcast3d/exult-co-op-mode), GPL-2.0
 
 This library is free software; you can redistribute it and/or
 modify it under the terms of the GNU Library General Public
@@ -45,6 +46,7 @@ Boston, MA  02111-1307, USA.
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <string>
 
@@ -831,6 +833,7 @@ void Image_window::free_surface() {
 	draw_surface     = nullptr;
 	ibuf->bits       = nullptr;
 	free_layer_textures();
+	free_light_texture();
 	if (screen_renderer != nullptr) {
 		SDL_DestroyRenderer(screen_renderer);
 	}
@@ -900,6 +903,9 @@ void Image_window::show(int x, int y, int w, int h) {
 	// call EndPaintIntoGuardBand just in case. It is safe to call it when not
 	// needed
 	EndPaintIntoGuardBand();
+	if (pre_show && !scene_mode) {
+		pre_show();
+	}
 
 	int srcx = 0;
 	int srcy = 0;
@@ -1114,6 +1120,9 @@ void Image_window::show(int x, int y, int w, int h) {
 	if (err && *err) {
 		std::cerr << "A SDL error occurred: " << err << std::endl;
 	}
+	if (post_show) {
+		post_show();
+	}
 }
 
 /*
@@ -1254,6 +1263,32 @@ void Image_window::FillGuardband() {
 	}
 }
 
+bool Image_window::read_screen(std::vector<unsigned char>& rgb, int& w, int& h) {
+	if (screen_renderer == nullptr) {
+		return false;
+	}
+	UpdateRect(nullptr, nullptr, true);
+	SDL_Surface* surf = SDL_RenderReadPixels(screen_renderer, nullptr);
+	if (surf == nullptr) {
+		SDL_ClearError();
+		return false;
+	}
+	SDL_Surface* conv = SDL_ConvertSurface(surf, SDL_PIXELFORMAT_RGB24);
+	SDL_DestroySurface(surf);
+	if (conv == nullptr) {
+		SDL_ClearError();
+		return false;
+	}
+	w = conv->w;
+	h = conv->h;
+	rgb.resize(size_t(w) * h * 3);
+	for (int y = 0; y < h; y++) {
+		std::memcpy(rgb.data() + size_t(y) * w * 3, static_cast<const unsigned char*>(conv->pixels) + size_t(y) * conv->pitch,
+					size_t(w) * 3);
+	}
+	SDL_DestroySurface(conv);
+	return true;
+}
 bool Image_window::screenshot(SDL_IOStream* dst, bool paletted) {
 	if (paletted && paletted_surface) {
 		return SaveIMG_RW(draw_surface, dst, true, guard_band);
@@ -2110,6 +2145,113 @@ void Image_window::free_layer_textures() {
 	}
 }
 
+void Image_window::free_light_texture() {
+	if (light_texture != nullptr) {
+		SDL_DestroyTexture(light_texture);
+		light_texture = nullptr;
+	}
+	if (glow_texture != nullptr) {
+		SDL_DestroyTexture(glow_texture);
+		glow_texture = nullptr;
+	}
+	glow_on = false;
+	light_w = light_h = 0;
+	light_on          = false;
+}
+/*
+ *  The light overlay's textures, rows row0 to row1 only (a whole layer is
+ *  megabytes a frame at high resolutions).  The multiply texture is drawn
+ *  as 2 * scene * texel, so 128 leaves a pixel as it is.
+ *  Portions adapted from Quest of the Companions (xcast3d/exult-co-op-mode), GPL-2.0.
+ */
+bool Image_window::set_light_overlay(
+		const uint32* mul, const uint32* add, int gx, int gy, int w, int h, int row0, int row1) {
+	if (screen_renderer == nullptr || w <= 0 || h <= 0) {
+		return false;
+	}
+	if (light_texture == nullptr || light_w != w || light_h != h) {
+		row0 = 0;    // A new texture: send it all.
+		row1 = h;
+		if (light_texture != nullptr) {
+			SDL_DestroyTexture(light_texture);
+		}
+		if (glow_texture != nullptr) {
+			SDL_DestroyTexture(glow_texture);
+			glow_texture = nullptr;
+		}
+		light_texture = SDL_CreateTexture(screen_renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h);
+		if (light_texture == nullptr) {
+			return false;
+		}
+		light_w = w;
+		light_h = h;
+		// Keep the light as chunky as the game's pixels.
+		SDL_SetTextureScaleMode(light_texture, SDL_SCALEMODE_NEAREST);
+		const SDL_BlendMode mul2 = SDL_ComposeCustomBlendMode(
+				SDL_BLENDFACTOR_DST_COLOR, SDL_BLENDFACTOR_SRC_COLOR, SDL_BLENDOPERATION_ADD, SDL_BLENDFACTOR_ZERO,
+				SDL_BLENDFACTOR_ONE, SDL_BLENDOPERATION_ADD);
+		light_mul2 = SDL_SetTextureBlendMode(light_texture, mul2);
+		if (!light_mul2) {
+			SDL_SetTextureBlendMode(light_texture, SDL_BLENDMODE_MOD);
+		}
+	}
+	row0 = std::clamp(row0, 0, h);
+	row1 = std::clamp(row1, row0, h);
+	const SDL_Rect rows = {0, row0, w, row1 - row0};
+	if (light_mul2) {
+		if (rows.h > 0) {
+			SDL_UpdateTexture(light_texture, &rows, mul + size_t(row0) * w, w * 4);
+		}
+	} else {
+		// Plain multiply: 255 = unchanged, so double and clamp.
+		std::vector<uint32> tmp(mul, mul + size_t(w) * h);
+		for (auto& px : tmp) {
+			const uint32 r = std::min<uint32>(255, ((px >> 16) & 0xff) * 2);
+			const uint32 g = std::min<uint32>(255, ((px >> 8) & 0xff) * 2);
+			const uint32 b = std::min<uint32>(255, (px & 0xff) * 2);
+			px             = 0xff000000u | (r << 16) | (g << 8) | b;
+		}
+		SDL_UpdateTexture(light_texture, nullptr, tmp.data(), w * 4);
+	}
+	glow_on = false;
+	if (add != nullptr) {
+		SDL_Rect add_rows = rows;
+		if (glow_texture == nullptr) {
+			glow_texture = SDL_CreateTexture(screen_renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h);
+			if (glow_texture != nullptr) {
+				SDL_SetTextureScaleMode(glow_texture, SDL_SCALEMODE_NEAREST);
+				SDL_SetTextureBlendMode(glow_texture, SDL_BLENDMODE_ADD);
+			}
+			add_rows = {0, 0, w, h};
+		}
+		if (glow_texture != nullptr) {
+			if (add_rows.h > 0) {
+				SDL_UpdateTexture(glow_texture, &add_rows, add + size_t(add_rows.y) * w, w * 4);
+			}
+			glow_on = true;
+		}
+	}
+	light_gx = gx;
+	light_gy = gy;
+	light_on = true;
+	return true;
+}
+void Image_window::render_light_overlay() {
+	if (!light_on || light_texture == nullptr || scene_mode) {
+		return;
+	}
+	// The game image fills the window, so a game pixel maps straight across,
+	// whatever the scaler and fill scaler did in between.
+	const float kx = float(display_width) / float(get_full_width());
+	const float ky = float(display_height) / float(get_full_height());
+	SDL_FRect   dst
+			= {float(light_gx - get_start_x()) * kx, float(light_gy - get_start_y()) * ky, float(light_w) * kx,
+			   float(light_h) * ky};
+	SDL_RenderTexture(screen_renderer, light_texture, nullptr, &dst);
+	if (glow_on && glow_texture != nullptr) {
+		SDL_RenderTexture(screen_renderer, glow_texture, nullptr, &dst);
+	}
+}
 void Image_window::composite_layers() {
 	if (layers.empty() || screen_renderer == nullptr) {
 		return;
@@ -2229,6 +2371,7 @@ void Image_window::UpdateRect(SDL_FRect* dirtyRect, SDL_FRect* fullRect, bool fo
 		}
 	}
 
+	render_light_overlay();
 	// Draw overlay layers on top of the main image, before presenting.
 	composite_layers();
 	if (!for_screenshot) {

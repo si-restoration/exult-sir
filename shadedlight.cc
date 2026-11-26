@@ -47,6 +47,7 @@
 #include "shadedgrid.h"
 #include "shadedweather.h"
 #include "shapeinf.h"
+#include "shapevga.h"
 #include "utils.h"
 
 #include <algorithm>
@@ -400,11 +401,13 @@ namespace {
 	/*
 	 *  Reads the lights section of shaded_light.txt:
 	 *      shape/frame/radius/brightness/red/green/blue/height/flags
-	 *  Patch rows replace static rows with the same shape and frame.
+	 *  A field left blank, or left out at the end of the row, is kept as
+	 *  shaded_light_inherit: the light's own light_data brightness gives it
+	 *  (Shaded_default_light).  Patch rows replace static rows with the
+	 *  same shape and frame.
 	 */
 	class Shaded_light_reader final : public Base_reader {
 		Light_table& table;
-
 	protected:
 		void read_data(std::istream& in, size_t index, int version, bool patch, Exult_Game game, bool binary) override {
 			ignore_unused_variable_warning(index, version, patch, game, binary);
@@ -414,24 +417,46 @@ namespace {
 				return;
 			}
 			frame = frame < 0 ? -1 : (frame & 0xff);
-			// Missing fields take a torch's row.
-			const Shaded_light_entry def = Shaded_default_light(5);
-			Shaded_light_entry       entry;
-			entry.radius     = std::max(ReadInt(in, def.radius), 0);
-			entry.brightness = std::max(ReadInt(in, def.brightness), 0);
-			entry.red        = std::clamp(ReadInt(in, def.red), 0, 255);
-			entry.green      = std::clamp(ReadInt(in, def.green), 0, 255);
-			entry.blue       = std::clamp(ReadInt(in, def.blue), 0, 255);
-			entry.height     = ReadInt(in, def.height);
-			entry.flags      = ReadInt(in, def.flags) & (shaded_light_area | shaded_light_off);
-
+			// The rest of the row, one field per '/'.
+			std::string rest;
+			std::getline(in, rest);
+			std::vector<std::string> fields;
+			std::stringstream        split(rest);
+			for (std::string field; std::getline(split, field, '/');) {
+				fields.push_back(field);
+			}
+			auto field = [&fields](size_t i) {
+				if (i >= fields.size()) {
+					return shaded_light_inherit;
+				}
+				const std::string& f     = fields[i];
+				const size_t       first = f.find_first_not_of(" \t\r");
+				if (first == std::string::npos) {
+					return shaded_light_inherit;
+				}
+				char*      end   = nullptr;
+				const long value = std::strtol(f.c_str() + first, &end, 10);
+				return end == f.c_str() + first ? shaded_light_inherit : static_cast<int>(value);
+			};
+			auto clamped = [](int v, int lo, int hi) {
+				return v == shaded_light_inherit ? v : std::clamp(v, lo, hi);
+			};
+			Shaded_light_entry entry;
+			entry.radius     = clamped(field(0), 0, std::numeric_limits<int>::max());
+			entry.brightness = clamped(field(1), 0, std::numeric_limits<int>::max());
+			entry.red        = clamped(field(2), 0, 255);
+			entry.green      = clamped(field(3), 0, 255);
+			entry.blue       = clamped(field(4), 0, 255);
+			entry.height     = field(5);
+			entry.flags      = field(6);
+			if (entry.flags != shaded_light_inherit) {
+				entry.flags &= shaded_light_area | shaded_light_off;
+			}
 			table[std::make_pair(shape, frame)] = entry;
 		}
-
 	public:
 		explicit Shaded_light_reader(Light_table& t) : Base_reader(false), table(t) {}
 	};
-
 	using Volume_table = std::map<std::pair<int, int>, uint8_t>;
 
 	/*
@@ -1661,7 +1686,7 @@ void Shaded_cpu::light_rows(
 		const Shaded_scene_buffers& buf, const Shaded_light_params& params, const Shaded_light_record* lights,
 		const uint32_t* bin_offsets, const uint16_t* bin_lights, const Shaded_rect& r, int y0, int y1, uint8_t* levels,
 		const Shaded_shadow_set* shadows, uint8_t* shadow_out, const Shaded_weather_set* weather,
-		const Shaded_weather_out* wout) {
+		const Shaded_weather_out* wout, uint32_t* tint_out) {
 	if (params.bins_x <= 0 || params.bins_y <= 0) {
 		return;
 	}
@@ -1760,6 +1785,9 @@ void Shaded_cpu::light_rows(
 				if (shadow_out) {
 					shadow_out[idx] = 255;
 				}
+				if (tint_out) {
+					tint_out[idx] = shaded_default_tint;
+				}
 				if (sky_out) {
 					sky_out[idx] = 255;
 				}
@@ -1781,6 +1809,14 @@ void Shaded_cpu::light_rows(
 			const int           bin  = bin_y * params.bins_x + std::clamp(x / params.bin_size, 0, params.bins_x - 1);
 			float               sum  = 0.0f;
 			float               full = 0.0f;    // Unshadowed sum, with shadows.
+			float               tint[3] = {0.0f, 0.0f, 0.0f};    // Colour-weighted sum.
+			auto                add_tint = [&](const Shaded_light_record& l, float w) {
+                if (tint_out) {
+                    tint[0] += w * l.red;
+                    tint[1] += w * l.green;
+                    tint[2] += w * l.blue;
+                }
+			};
 			float               ambient_p = ambient;    // The sky term, after the weather.
 			float               o         = 1.0f;    // Open to the sky.
 			float               lamp_k    = 1.0f;    // Lamps' share: off by day in the open.
@@ -1828,6 +1864,7 @@ void Shaded_cpu::light_rows(
 				if (id != shaded_id_none && l.object_id == id) {
 					sum += l.intensity;    // The light's own object.
 					full += l.intensity;
+					add_tint(l, l.intensity);
 					continue;
 				}
 				if (roof_px && (l.flags & shaded_light_covered)) {
@@ -1845,11 +1882,13 @@ void Shaded_cpu::light_rows(
 					if (wz >= l.z - 1.0f && wz <= l.z + params.area_height) {
 						if (!shadows) {
 							sum += l.intensity * Shaded_falloff(h2 / r2);
+							add_tint(l, l.intensity * Shaded_falloff(h2 / r2));
 							continue;
 						}
 						const float f = shadow_factor(bin_lights[k]);
 						full += l.intensity * Shaded_falloff(h2 / r2);
 						sum += l.intensity * f * Shaded_falloff(h2 / r2);
+						add_tint(l, l.intensity * f * Shaded_falloff(h2 / r2));
 					}
 					continue;
 				}
@@ -1865,11 +1904,13 @@ void Shaded_cpu::light_rows(
 				}
 				if (!shadows) {
 					sum += l.intensity * Shaded_falloff(d2 / r2) * (facing + (1.0f - facing) * ndotl);
+					add_tint(l, l.intensity * Shaded_falloff(d2 / r2) * (facing + (1.0f - facing) * ndotl));
 					continue;
 				}
 				const float f = shadow_factor(bin_lights[k]);
 				full += l.intensity * Shaded_falloff(d2 / r2) * (facing + (1.0f - facing) * ndotl);
 				sum += l.intensity * f * Shaded_falloff(d2 / r2) * (facing + (1.0f - facing) * ndotl);
+				add_tint(l, l.intensity * f * Shaded_falloff(d2 / r2) * (facing + (1.0f - facing) * ndotl));
 			}
 			const float lit_sum = sum * lamp_k;
 			float level = ambient_p + (1.0f - ambient_p) * (1.0f - std::exp(-lit_sum * params.brightness * inv_soft));
@@ -1905,6 +1946,17 @@ void Shaded_cpu::light_rows(
 				level = Shaded_particle_level(level, scattered, o);
 			}
 			levels[idx] = quantise(level, x, y);
+			if (tint_out) {
+				uint32_t t = shaded_default_tint;
+				if (sum > 1e-6f) {
+					t = 0;
+					for (int k = 0; k < 3; k++) {
+						const int c = std::clamp(static_cast<int>(std::lround(tint[k] / sum * 255.0f)), 0, 255);
+						t |= static_cast<uint32_t>(c) << (16 - 8 * k);
+					}
+				}
+				tint_out[idx] = t;
+			}
 			if (fog_out) {
 				// Fog in front of the pixel, lit by the sky and by the lamps
 				// whose light it scatters (no facing, no shadows).
@@ -2070,10 +2122,36 @@ static void Apply_night_tint(const uint8_t* in768, float weight, uint8_t* out768
 	}
 }
 
+void Shaded_cpu::warm_stop(const uint8_t* stop768, const uint8_t* day768, float warmth, uint8_t* out768) {
+	std::memcpy(out768, stop768, 768);
+	if (warmth <= 0.0f) {
+		return;
+	}
+	constexpr float gain[3] = {1.0f, 0.80f, 0.55f};    // Amber lamplight.
+	for (int i = 1; i <= shaded_last_lit_index; i++) {
+		const float y = 0.299f * stop768[3 * i] + 0.587f * stop768[3 * i + 1] + 0.114f * stop768[3 * i + 2];
+		float       w[3];
+		for (int k = 0; k < 3; k++) {
+			w[k] = static_cast<float>(day768[3 * i + k]) * gain[k];
+		}
+		const float yw    = 0.299f * w[0] + 0.587f * w[1] + 0.114f * w[2];
+		const float scale = yw > 0.01f ? y / yw : 0.0f;
+		for (int k = 0; k < 3; k++) {
+			const float warm = std::min(w[k] * scale, 63.0f);
+			const float mix  = static_cast<float>(stop768[3 * i + k]) + (warm - static_cast<float>(stop768[3 * i + k])) * warmth;
+			out768[3 * i + k] = static_cast<uint8_t>(std::clamp(std::lround(mix), 0L, 63L));
+		}
+	}
+}
 void Shaded_cpu::build_remap(
 		const uint8_t* ambient768, const uint8_t* const refs[4], Shaded_light_params& params, uint8_t* remap,
-		uint8_t* displayed768, Shaded_ramp* ramp) {
+		uint8_t* displayed768, Shaded_ramp* ramp, float warmth) {
 	const uint8_t* day = refs[0];
+	// The light stops, warmed (a copy; the game's palettes are not changed).
+	uint8_t warmed[4][768];
+	for (int k = 1; k < 4; k++) {
+		warm_stop(refs[k], day, warmth, warmed[k]);
+	}
 	// The stops: black, A at its (slider scaled) luminance, then the brighter
 	// reference palettes by luminance, DAY last at 1.
 	const float    ambient = std::clamp(palette_luminance(ambient768, day) * params.ambient, 0.0f, 1.0f);
@@ -2108,7 +2186,7 @@ void Shaded_cpu::build_remap(
 	}
 	std::sort(brighter, brighter + nbrighter);
 	for (int k = 0; k < nbrighter; k++) {
-		add_stop(shaded_ref_palettes[brighter[k].second], brighter[k].first, refs[brighter[k].second]);
+		add_stop(shaded_ref_palettes[brighter[k].second], brighter[k].first, warmed[brighter[k].second]);
 	}
 	add_stop(shaded_ref_palettes[0], 1.0f, day);
 	// Ramp colours are matched to DAY in CIELAB, lightness weighted 4: plain
@@ -2138,9 +2216,38 @@ void Shaded_cpu::build_remap(
 				const float hi = colours[seg + 1] ? colours[seg + 1][3 * i + k] : 0.0f;
 				c[k]           = static_cast<int>(std::lround(lo + (hi - lo) * t));
 			}
+			// Warm mid-ramp: between a cool ambient and a warm light stop the
+			// green must not fall below either end, nor below blue where the
+			// light is warm (red above blue), or the middle turns magenta.
+			const float lo_g = colours[seg] ? colours[seg][3 * i + 1] : 0.0f;
+			const float hi_g = colours[seg + 1] ? colours[seg + 1][3 * i + 1] : 0.0f;
+			const bool  warm_hi = colours[seg + 1] && colours[seg + 1][3 * i] >= colours[seg + 1][3 * i + 2];
+			int         green   = std::max(c[1], static_cast<int>(std::lround(std::min(lo_g, hi_g))));
+			if (warm_hi && green < c[2]) {
+				// Strongest mid-segment, none at the stops themselves.
+				green += static_cast<int>(std::lround(static_cast<float>(c[2] - green) * 4.0f * t * (1.0f - t)));
+			}
+			c[1] = std::min(green, 63);
 			float lab[3];
 			colour_lab(c[0], c[1], c[2], lab);
-			row[i] = static_cast<uint8_t>(nearest_colour_lab(day_lab, lab, 1, shaded_last_lit_index));
+			// Nearest DAY colour, not letting the snap lose the green again.
+			int   best      = 1;
+			float best_dist = std::numeric_limits<float>::max();
+			for (int j = 1; j <= shaded_last_lit_index; j++) {
+				const float dl    = lab[0] - day_lab[j][0];
+				const float da    = lab[1] - day_lab[j][1];
+				const float db    = lab[2] - day_lab[j][2];
+				const float short_g = std::max(0.0f, static_cast<float>(c[1] - day[3 * j + 1]) - 1.0f);
+				const float dist  = 4.0f * dl * dl + da * da + db * db + 24.0f * short_g * short_g;
+				if (dist < best_dist) {
+					best      = j;
+					best_dist = dist;
+					if (dist == 0.0f) {
+						break;
+					}
+				}
+			}
+			row[i] = static_cast<uint8_t>(best);
 		}
 	}
 	// B': DAY for the relit indices, A's own cycling colours, DAY's 0xff.
@@ -2158,6 +2265,176 @@ void Shaded_cpu::build_remap(
 	}
 }
 
+void Shaded_cpu::build_colour_ramp(
+		const uint8_t* ambient768, const uint8_t* const refs[4], const Shaded_light_params& params, float pool, float warmth,
+		const uint8_t* remap, uint32_t* mul, uint32_t* add) {
+	const uint8_t* day     = refs[0];
+	uint8_t        candle[768];
+	warm_stop(refs[1], day, warmth, candle);
+	const float    ambient = std::clamp(palette_luminance(ambient768, day) * params.ambient, 0.0f, 1.0f);
+	uint8_t        tinted[768];
+	const uint8_t* ambient_colours = ambient768;
+	{
+		const float weight = Night_tint_weight(palette_luminance(ambient768, day), params.night_tint);
+		if (weight > 0.0f) {
+			Apply_night_tint(ambient768, weight, tinted);
+			ambient_colours = tinted;
+		}
+	}
+	// Our night: the remap's ambient row as shown (DAY colours), with 45 %
+	// of the ambient palette's own hue.
+	const int top_q = std::max(params.level_count - 1, 1);
+	const int amb_q = std::clamp(static_cast<int>(std::lround(ambient * static_cast<float>(top_q))), 0, top_q);
+	uint8_t   night[768];
+	std::memcpy(night, ambient_colours, 768);
+	for (int i = 1; i <= shaded_last_lit_index; i++) {
+		const int shown = remap[amb_q * 256 + i];
+		for (int k = 0; k < 3; k++) {
+			night[3 * i + k] = static_cast<uint8_t>(
+					std::lround(0.55f * static_cast<float>(day[3 * shown + k]) + 0.45f * static_cast<float>(ambient_colours[3 * i + k])));
+		}
+	}
+	ambient_colours = night;
+	// Stops: black, our night, the CANDLE colours in the pool, DAY.
+	float          level[4];
+	const uint8_t* colours[4];
+	int            count = 0;
+	auto           add_stop = [&](float l, const uint8_t* pal) {
+        level[count]   = l;
+        colours[count] = pal;
+        count++;
+	};
+	add_stop(0.0f, nullptr);
+	add_stop(ambient, ambient_colours);
+	const float candle_y = palette_luminance(refs[1], day);
+	if (candle_y > ambient + 0.02f && candle_y < 0.98f) {
+		add_stop(ambient + std::clamp(pool, 0.05f, 0.95f) * (1.0f - ambient), candle);
+	}
+	add_stop(1.0f, day);
+	const int top = std::max(params.level_count - 1, 1);
+	// 6-bit colour to 0..255.
+	auto to8 = [](float v) {
+		return std::clamp(v * 255.0f / 63.0f, 0.0f, 255.0f);
+	};
+	for (int q = 0; q < shaded_light_levels; q++) {
+		const float l   = std::min(static_cast<float>(q) / static_cast<float>(top), 1.0f);
+		int         seg = 0;
+		while (seg + 2 < count && l > level[seg + 1]) {
+			seg++;
+		}
+		const float span = level[seg + 1] - level[seg];
+		const float t    = span > 1e-6f ? std::clamp((l - level[seg]) / span, 0.0f, 1.0f) : 1.0f;
+		for (int i = 0; i < 256; i++) {
+			const size_t at = static_cast<size_t>(q) * 256 + i;
+			mul[at]         = 0xff808080u;    // 128: unchanged.
+			add[at]         = 0xff000000u;
+			if (i < 1 || i > shaded_last_lit_index) {
+				continue;
+			}
+			float c[3];
+			for (int k = 0; k < 3; k++) {
+				const float lo = colours[seg] ? colours[seg][3 * i + k] : 0.0f;
+				const float hi = colours[seg + 1] ? colours[seg + 1][3 * i + k] : 0.0f;
+				c[k]           = lo + (hi - lo) * t;
+			}
+			// Warm mid-ramp, as build_remap: green never below both ends, nor
+			// below blue under a warm light, or the middle turns magenta.
+			const float lo_g = colours[seg] ? colours[seg][3 * i + 1] : 0.0f;
+			const float hi_g = colours[seg + 1] ? colours[seg + 1][3 * i + 1] : 0.0f;
+			c[1]             = std::max(c[1], std::min(lo_g, hi_g));
+			if (colours[seg + 1] && colours[seg + 1][3 * i] >= colours[seg + 1][3 * i + 2] && c[1] < c[2]) {
+				c[1] += (c[2] - c[1]) * 4.0f * t * (1.0f - t);
+			}
+			uint32_t m = 0xff000000u, a = 0xff000000u;
+			for (int k = 0; k < 3; k++) {
+				const float want = to8(c[k]);
+				const float have = to8(static_cast<float>(day[3 * i + k]));
+				int         mk, ak;
+				if (have < 0.5f) {
+					mk = 0;
+					ak = static_cast<int>(std::lround(want));
+				} else {
+					// The multiply only darkens (at most 128, unchanged), so the
+					// plain-multiply fallback gives the same; the add brightens.
+					mk = std::clamp(static_cast<int>(std::lround(std::min(want / have, 1.0f) * 128.0f)), 0, 128);
+					ak = std::clamp(static_cast<int>(std::lround(want - 2.0f * have * static_cast<float>(mk) / 255.0f)), 0, 255);
+				}
+				m |= static_cast<uint32_t>(mk) << (16 - 8 * k);
+				a |= static_cast<uint32_t>(ak) << (16 - 8 * k);
+			}
+			mul[at] = m;
+			add[at] = a;
+		}
+	}
+}
+void Shaded_cpu::colour_rows(
+		const Shaded_scene_buffers& buf, const Shaded_rect& r, int y0, int y1, const uint8_t* levels,
+		const unsigned char* frame, const uint32_t* mul_tab, const uint32_t* add_tab, const uint32_t* tint, int amb_q,
+		const uint8_t* day768, const uint8_t* fog_codes, const int* fog_rgb, int gw, uint32_t* out_mul, uint32_t* out_add,
+		uint8_t* world) {
+	// What a texel pair gives over DAY's colour c (0..255) of one channel.
+	auto shown = [](uint32_t m, uint32_t a, int sh, int c) {
+		return std::min(255, (2 * c * static_cast<int>((m >> sh) & 0xff) + 127) / 255 + static_cast<int>((a >> sh) & 0xff));
+	};
+	// Default lamp colour, per channel.
+	constexpr int def[3] = {0xff, 0xd6, 0xaa};
+	for (int y = y0; y < y1; y++) {
+		const int idx = buf.index(r.x, y);
+		const int out = y * gw + r.x;
+		for (int n = 0; n < r.w; n++) {
+			const int i   = idx + n;
+			const int pix = frame[i];
+			const int t   = levels[i] * 256 + pix;
+			uint32_t  m   = mul_tab[t];
+			uint32_t  a   = add_tab[t];
+			world[out + n] = static_cast<uint8_t>(pix);
+			if (tint && tint[i] != shaded_default_tint && pix >= 1 && pix <= shaded_last_lit_index && levels[i] > amb_q) {
+				// The lamps' share above the night takes their own colour.
+				const uint32_t am = mul_tab[amb_q * 256 + pix];
+				const uint32_t aa = add_tab[amb_q * 256 + pix];
+				uint32_t       nm = 0xff000000u, na = 0xff000000u;
+				for (int k = 0; k < 3; k++) {
+					const int   sh   = 16 - 8 * k;
+					const int   have = day768[3 * pix + k] * 255 / 63;
+					const int   lit  = shown(m, a, sh, have);
+					const int   base = shown(am, aa, sh, have);
+					const float gain = static_cast<float>((tint[i] >> sh) & 0xff) / static_cast<float>(def[k]);
+					const float want = std::clamp(static_cast<float>(base) + static_cast<float>(lit - base) * gain, 0.0f, 255.0f);
+					int         mk, ak;
+					if (have <= 0) {
+						mk = 0;
+						ak = static_cast<int>(std::lround(want));
+					} else {
+						mk = std::clamp(static_cast<int>(std::lround(std::min(want / static_cast<float>(have), 1.0f) * 128.0f)), 0, 128);
+						ak = std::clamp(static_cast<int>(std::lround(want - 2.0f * static_cast<float>(have) * static_cast<float>(mk) / 255.0f)), 0, 255);
+					}
+					nm |= static_cast<uint32_t>(mk) << sh;
+					na |= static_cast<uint32_t>(ak) << sh;
+				}
+				m = nm;
+				a = na;
+			}
+			const int fc = fog_codes && pix <= shaded_last_lit_index ? fog_codes[i] : 0;
+			if (fc) {
+				// Fog in front: lit * (1 - amount) + fog colour * light * amount.
+				const int fk = fc & 7;
+				const int fl = fc >> 3;
+				uint32_t  nm = 0xff000000u, na = 0xff000000u;
+				for (int k = 0; k < 3; k++) {
+					const int sh = 16 - 8 * k;
+					const int mk = static_cast<int>((m >> sh) & 0xff) * (8 - fk) / 8;
+					const int ak = static_cast<int>((a >> sh) & 0xff) * (8 - fk) / 8 + fog_rgb[k] * fl * fk / (7 * 8);
+					nm |= static_cast<uint32_t>(mk) << sh;
+					na |= static_cast<uint32_t>(std::min(ak, 255)) << sh;
+				}
+				m = nm;
+				a = na;
+			}
+			out_mul[out + n] = m;
+			out_add[out + n] = a;
+		}
+	}
+}
 void Shaded_cpu::resolve_view(
 		const Shaded_scene_buffers& buf, const Shaded_light_params& params, const Shaded_rect& r, const uint8_t* lut,
 		unsigned char* frame) {
@@ -2190,6 +2467,12 @@ Shaded_light::Shaded_light()
 		if (!pending_teleport) {
 			std::cout << "SHADED: EXULT_SHADED_TELEPORT wants x,y,z, not " << tele << std::endl;
 		}
+	}
+	if (const char* scr = std::getenv("EXULT_SHADED_DUMP_SCREEN"); scr && *scr) {
+		screen_dumps = *scr != '0';
+	}
+	if (const char* every = std::getenv("EXULT_SHADED_SCREEN_EVERY"); every && *every) {
+		screen_every = std::max(std::atoi(every), 0);
 	}
 	if (const char* dir = std::getenv("EXULT_SHADED_DUMP"); dir && *dir) {
 		dump_dir = dir;
@@ -2436,6 +2719,17 @@ void Shaded_light::read_sliders() {
 	config->value(base + "roof_cover", roof_cover, true);
 	params.roof_cover = roof_cover ? 1 : 0;
 	params.night_tint = std::min(percent("night_tint", 0), 1.0f);
+	// Full colour: the light drawn as a multiply and an add over the scene
+	// (needs a renderer; the 8-bit remap shows it otherwise).
+	config->value(base + "colour", colour_option, true);
+	colour_pool   = std::clamp(percent("colour_pool", 55), 0.05f, 0.95f);
+	colour_warmth = std::clamp(percent("colour_warmth", 50), 0.0f, 1.0f);
+	if (const char* warm = std::getenv("EXULT_SHADED_WARMTH"); warm && *warm) {
+		colour_warmth = std::clamp(static_cast<float>(std::atoi(warm)) / 100.0f, 0.0f, 1.0f);
+	}
+	if (const char* col = std::getenv("EXULT_SHADED_COLOUR"); col && *col) {
+		colour_env = std::string(col) == "force" ? 2 : (*col != '0' ? 1 : 0);
+	}
 	// Weather.
 	bool weather;
 	config->value(base + "weather/enabled", weather, false);
@@ -2557,6 +2851,34 @@ void Shaded_light::load_table() {
 		table_radius = std::max(table_radius, entry.radius);
 	}
 	std::cout << "SHADED: light table has " << light_table.size() << " rows" << std::endl;
+	if (const char* audit = std::getenv("EXULT_SHADED_TABLE_AUDIT"); audit && *audit) {
+		// Each row as the game resolves it for the light_data brightness of
+		// its shape and frame, and the formula for that brightness.
+		Shapes_vga_file& shapes = Shape_manager::get_instance()->get_shapes();
+		for (const auto& [id, entry] : light_table) {
+			const int          frames = shapes.get_num_frames(id.first);
+			const int          frame  = id.second < 0 ? 0 : id.second;
+			const Shape_info&  info   = shapes.get_info(id.first);
+			int                b      = info.get_object_light(frame);
+			if (id.second < 0) {
+				// A wildcard row: the brightness of every frame it covers.
+				for (int f = 0; f < std::max(frames, 1); f++) {
+					if (light_table.count(std::make_pair(id.first, f & 31)) == 0) {
+						const int fb = info.get_object_light(f);
+						if (fb != b) {
+							b = b > 0 ? -2 : fb;    // -2: frames differ.
+						}
+					}
+				}
+			}
+			auto out = [](int v) {
+				return v == shaded_light_inherit ? std::string() : std::to_string(v);
+			};
+			std::cout << "SHADED-TABLE: " << id.first << "/" << id.second << " b " << b << " row " << out(entry.radius) << "/"
+					  << out(entry.brightness) << "/" << out(entry.red) << "/" << out(entry.green) << "/" << out(entry.blue)
+					  << "/" << out(entry.height) << "/" << out(entry.flags) << std::endl;
+		}
+	}
 	std::cout << "SHADED: magic light rows " << shaded_magic_kinds << " (radius " << magic_table[0].radius << " and "
 			  << magic_table[1].radius << " tiles)" << std::endl;
 	std::cout << "SHADED: volume rows " << volume_table.size() << " (rounded " << (params.rounded ? "on" : "off")
@@ -2586,19 +2908,20 @@ Shaded_volume Shaded_light::volume_for(const Game_object& obj) const {
 
 /*
  *  The row for a light: exact (shape, frame & 31), then (shape, -1), else
- *  the formula from its light_data brightness.
+ *  the formula from its light_data brightness; a row's blank fields come
+ *  from the formula too.
  */
 
 Shaded_light_entry Shaded_light::find_row(int shape, int frame, int brightness, Shaded_light_row& row) const {
 	auto it = light_table.find(std::make_pair(shape, frame & 31));
 	if (it != light_table.end()) {
 		row = Shaded_light_row::exact;
-		return it->second;
+		return Shaded_resolve_light(it->second, brightness);
 	}
 	it = light_table.find(std::make_pair(shape, -1));
 	if (it != light_table.end()) {
 		row = Shaded_light_row::wildcard;
-		return it->second;
+		return Shaded_resolve_light(it->second, brightness);
 	}
 	row = Shaded_light_row::formula;
 	return Shaded_default_light(brightness);
@@ -2893,6 +3216,12 @@ bool Shaded_light::prepare_paint() {
 	if (!record_on && !lighting_on) {
 		return false;
 	}
+	if (screen_dump >= 0) {
+		// The dumped frame has been shown: read back what the renderer drew
+		// (the scene, the light overlay and the layers) for the dump.
+		dump_screen(screen_dump);
+		screen_dump = -1;
+	}
 	if (shadows_wanted() || weather_wanted() || sun_wanted()) {
 		Shaded_grid::get();    // Turns itself on for the shadows, the weather and the sun.
 	}
@@ -2913,6 +3242,7 @@ bool Shaded_light::prepare_paint() {
 		applied_palette = true;
 		pal->apply(false);
 	}
+	update_colour_mode();
 	const bool weather_changed = prepare_weather();
 	// The lighting of a partial paint must match the frame around it, so
 	// any change of what it depends on paints the whole game area.
@@ -3431,6 +3761,16 @@ void Shaded_light::set_lit(bool on) {
 	}
 	lit_active = on;
 	need_full  = true;
+	if (!on) {
+		// No light overlay over what the game shows unlit (menus, fades).
+		colour_mode    = false;
+		colour_painted = false;
+		overlay_sent   = false;
+		if (Image_window8* w = Game_window::get_instance()->get_win()) {
+			w->clear_light_overlay();
+			w->set_pre_show(std::function<void()>());
+		}
+	}
 	Game_window::get_instance()->set_all_dirty();
 }
 
@@ -3567,7 +3907,8 @@ bool Shaded_light::filter_palette(
 	const std::string key = Game_key();
 	const bool        same_ambient
 			= have_ambient && ambient_pal.size() == 768 && std::equal(in768, in768 + 768, ambient_pal.begin());
-	if (!same_ambient || remap_slider != params.ambient || remap_tint != params.night_tint || remap_game != key) {
+	if (!same_ambient || remap_slider != params.ambient || remap_tint != params.night_tint || remap_game != key
+		|| colour_tab_pool != colour_pool || colour_tab_warmth != colour_warmth) {
 		if (!load_refs()) {
 			set_lit(false);
 			return false;
@@ -3580,7 +3921,14 @@ bool Shaded_light::filter_palette(
 		switch (backend()) {
 		case Shaded_backend::gpu:    // backend() falls back to CPU.
 		case Shaded_backend::cpu:
-			Shaded_cpu::build_remap(ambient_pal.data(), refs, params, remap.data(), displayed_pal.data(), &ramp);
+			Shaded_cpu::build_remap(ambient_pal.data(), refs, params, remap.data(), displayed_pal.data(), &ramp, colour_warmth);
+			colour_mul_tab.resize(shaded_remap_size);
+			colour_add_tab.resize(shaded_remap_size);
+			Shaded_cpu::build_colour_ramp(
+					ambient_pal.data(), refs, params, colour_pool, colour_warmth, remap.data(), colour_mul_tab.data(),
+					colour_add_tab.data());
+			colour_tab_pool   = colour_pool;
+			colour_tab_warmth = colour_warmth;
 			break;
 		}
 		ambient_y    = Shaded_cpu::palette_luminance(ambient_pal.data(), refs[0]);
@@ -3639,6 +3987,7 @@ bool Shaded_light::setup_buffers(Image_window8& win) {
 		buffers.flash_levels.assign(count, 0);
 		buffers.particle_mask.assign(count, 0);
 		buffers.normal_map.assign(count, 0);
+		buffers.light_tint.assign(count, shaded_default_tint);
 		buffers.objects.clear();
 		buffers.object_opacity.clear();
 		buffers.object_volumes.clear();
@@ -3737,12 +4086,53 @@ void Shaded_light::begin_paint(Image_window8& win, bool full) {
 }
 
 /*
+ *  Move the light overlay (game area, ov_w x ov_h) by (-dx, -dy) pixels
+ *  with the frame; what comes into view is unlit until painted.
+ */
+void Shaded_light::shift_overlay(int dx, int dy) {
+	if (ov_mul.empty() || (dx == 0 && dy == 0)) {
+		return;
+	}
+	colour_resend = true;    // The window's texture holds the old position.
+	if (std::abs(dx) >= ov_w || std::abs(dy) >= ov_h) {
+		std::fill(ov_mul.begin(), ov_mul.end(), 0xff808080u);
+		std::fill(ov_add.begin(), ov_add.end(), 0xff000000u);
+		std::fill(ov_world.begin(), ov_world.end(), 0);
+		return;
+	}
+	const int w     = ov_w - std::abs(dx);
+	const int src_x = std::max(dx, 0);
+	const int dst_x = std::max(-dx, 0);
+	const int rows  = ov_h - std::abs(dy);
+	auto      row   = [&](int src_y, int dst_y) {
+		const size_t from = static_cast<size_t>(src_y) * ov_w + src_x;
+		const size_t to   = static_cast<size_t>(dst_y) * ov_w + dst_x;
+		std::memmove(ov_mul.data() + to, ov_mul.data() + from, static_cast<size_t>(w) * sizeof(uint32_t));
+		std::memmove(ov_add.data() + to, ov_add.data() + from, static_cast<size_t>(w) * sizeof(uint32_t));
+		std::memmove(ov_world.data() + to, ov_world.data() + from, static_cast<size_t>(w));
+	};
+	if (dy > 0) {
+		for (int r = 0; r < rows; r++) {
+			row(r + dy, r);
+		}
+	} else if (dy < 0) {
+		for (int r = rows - 1; r >= 0; r--) {
+			row(r, r - dy);
+		}
+	} else {
+		for (int r = 0; r < rows; r++) {
+			row(r, r);    // memmove allows the overlap.
+		}
+	}
+}
+/*
  *  Move the record's game area by (-dx, -dy) pixels, as the frame was.
  */
 
 void Shaded_light::shift(int dx, int dy) {
 	const Shaded_rect area = buffers.bounds();
 	record_dirty_all       = true;
+	shift_overlay(dx, dy);
 	if (std::abs(dx) >= area.w || std::abs(dy) >= area.h) {
 		Shaded_cpu::clear_rect(buffers, area);
 		return;
@@ -3762,6 +4152,7 @@ void Shaded_light::shift(int dx, int dy) {
 		std::copy_n(buffers.light_levels.begin() + from, w, buffers.light_levels.begin() + to);
 		std::copy_n(buffers.shadow_levels.begin() + from, w, buffers.shadow_levels.begin() + to);
 		std::copy_n(buffers.normal_map.begin() + from, w, buffers.normal_map.begin() + to);
+		std::copy_n(buffers.light_tint.begin() + from, w, buffers.light_tint.begin() + to);
 		for (std::vector<uint8_t>* b : weather_buffers) {
 			std::copy_n(b->begin() + from, w, b->begin() + to);
 		}
@@ -3782,6 +4173,7 @@ void Shaded_light::shift(int dx, int dy) {
 		std::vector<uint8_t>  l8(static_cast<size_t>(w));
 		std::vector<uint8_t>  s8(static_cast<size_t>(w));
 		std::vector<uint16_t> n16(static_cast<size_t>(w));
+		std::vector<uint32_t> t32(static_cast<size_t>(w));
 		for (int r = 0; r < rows; r++) {
 			const int from = buffers.index(src_x, area.y + r);
 			const int to   = buffers.index(dst_x, area.y + r);
@@ -3797,6 +4189,8 @@ void Shaded_light::shift(int dx, int dy) {
 			std::copy(l8.begin(), l8.end(), buffers.light_levels.begin() + to);
 			std::copy(s8.begin(), s8.end(), buffers.shadow_levels.begin() + to);
 			std::copy(n16.begin(), n16.end(), buffers.normal_map.begin() + to);
+			std::copy_n(buffers.light_tint.begin() + from, w, t32.begin());
+			std::copy(t32.begin(), t32.end(), buffers.light_tint.begin() + to);
 			for (std::vector<uint8_t>* b : weather_buffers) {
 				std::copy_n(b->begin() + from, w, s8.begin());
 				std::copy(s8.begin(), s8.end(), b->begin() + to);
@@ -3876,7 +4270,7 @@ int Shaded_light::light_pass(
 		if (!fresh) {
 			Shaded_cpu::light_rows(
 					buffers, params, lights.data(), buffers.bin_offsets.data(), buffers.bin_lights.data(), r, y0, y1, levels,
-					shadows, shadow_out, weather, wout);
+					shadows, shadow_out, weather, wout, tint_target);
 		}
 		// With fresh, only its blocks are lit; the others keep their levels.
 		for (int y = y0; fresh && y < y1;) {
@@ -3897,7 +4291,7 @@ int Shaded_light::light_pass(
 				const int x1 = std::min(r.x + r.w, (end + 1) * shaded_record_block);
 				Shaded_cpu::light_rows(
 						buffers, params, lights.data(), buffers.bin_offsets.data(), buffers.bin_lights.data(),
-						Shaded_rect{x0, r.y, x1 - x0, r.h}, y, yend, levels, shadows, shadow_out, weather, wout);
+						Shaded_rect{x0, r.y, x1 - x0, r.h}, y, yend, levels, shadows, shadow_out, weather, wout, tint_target);
 				bx = end + 1;
 			}
 			y = yend;
@@ -3911,6 +4305,12 @@ int Shaded_light::light_pass(
 					nullptr, nullptr, frame);
 		} else if (frame) {
 			Shaded_cpu::apply_light_rows(buffers, r, y0, y1, levels, remap.data(), frame);
+		}
+		if (const Colour_target* ct = colour_target) {
+			Shaded_cpu::colour_rows(
+					buffers, r, y0, y1, levels, ct->frame, colour_mul_tab.data(), colour_add_tab.data(), buffers.light_tint.data(),
+					colour_amb_q, ref_pals[0].data(), ct->fog && wout ? wout->fog : nullptr, ct->fog_rgb, ov_w, ov_mul.data(),
+					ov_add.data(), ov_world.data());
 		}
 	};
 	// Bands are taken as the workers come free: more bands than threads
@@ -4951,7 +5351,13 @@ void Shaded_light::verify_paint() {
 	std::vector<uint8_t> levels(buffers.light_levels);
 	const bool           shadowed = shadow_pass(all, fresh, false, false, fresh_stats);    // As a full paint would.
 	const Shaded_weather_set* weather = weather_set_on ? weather_set.get() : nullptr;
+	std::vector<uint32_t>     fresh_tint;
+	if (colour_painted) {
+		fresh_tint.assign(buffers.light_tint.size(), shaded_default_tint);
+		tint_target = fresh_tint.data();
+	}
 	light_pass(all, levels.data(), false, nullptr, shadowed ? &fresh : nullptr, nullptr, weather);
+	tint_target = nullptr;
 	long bad = 0;
 	for (int y = all.y; y < all.y + all.h; y++) {
 		const int idx = buffers.index(all.x, y);
@@ -4962,6 +5368,31 @@ void Shaded_light::verify_paint() {
 	verify_paints++;
 	verify_bad_paints += bad > 0 ? 1 : 0;
 	verify_bad_px += bad;
+	if (colour_painted && ov_w == gwin->get_width()) {
+		// The overlay texels the fresh levels give, against those sent (where
+		// nothing was painted over the unlit world).
+		const auto*           frame = static_cast<const unsigned char*>(Game_window::get_instance()->get_win()->get_draw_surface()->pixels);
+		const size_t          n     = static_cast<size_t>(ov_w) * ov_h;
+		std::vector<uint32_t> fresh_mul(n), fresh_add(n);
+		std::vector<uint8_t>  fresh_world(n);
+		const int             fog_rgb[3] = {
+                static_cast<int>(std::lround(std::clamp(fog_colour[0], 0.0f, 63.0f) * 255.0f / 63.0f)),
+                static_cast<int>(std::lround(std::clamp(fog_colour[1], 0.0f, 63.0f) * 255.0f / 63.0f)),
+                static_cast<int>(std::lround(std::clamp(fog_colour[2], 0.0f, 63.0f) * 255.0f / 63.0f))};
+		Shaded_cpu::colour_rows(
+				buffers, all, all.y, all.y + all.h, levels.data(), frame, colour_mul_tab.data(), colour_add_tab.data(),
+				fresh_tint.data(), colour_amb_q, ref_pals[0].data(), params.fog && fog_table.size() == shaded_fog_table_size && weather_set_on ? buffers.fog_codes.data() : nullptr,
+				fog_rgb, ov_w, fresh_mul.data(), fresh_add.data(), fresh_world.data());
+		for (int y = all.y; y < all.y + all.h; y++) {
+			const int idx = buffers.index(all.x, y);
+			for (int x = 0; x < all.w; x++) {
+				const size_t at = static_cast<size_t>(y) * ov_w + x;
+				if (frame[idx + x] == ov_world[at] && (fresh_mul[at] != ov_mul[at] || fresh_add[at] != ov_add[at])) {
+					verify_colour_bad_px++;
+				}
+			}
+		}
+	}
 }
 
 void Shaded_light::finish_paint(Image_window8& win, bool full) {
@@ -4999,6 +5430,14 @@ void Shaded_light::finish_paint(Image_window8& win, bool full) {
 					  || view == Shaded_view::shadow || view == Shaded_view::weather || due;
 	auto*      frame = static_cast<unsigned char*>(win.get_draw_surface()->pixels);
 	params.lit       = apply ? 1 : 0;
+	// With the overlay the frame stays unlit; the levels go to the overlay.
+	const bool colour_pass = apply && colour_mode && view == Shaded_view::normal && ov_w > 0
+							 && colour_mul_tab.size() == shaded_remap_size && !ov_mul.empty() && !ref_pals.empty()
+							 && buffers.light_tint.size() == buffers.light_levels.size();
+	Colour_target colour_info{frame, {0, 0, 0}, params.fog && fog_table.size() == shaded_fog_table_size};
+	for (int k = 0; k < 3; k++) {
+		colour_info.fog_rgb[k] = static_cast<int>(std::lround(std::clamp(fog_colour[k], 0.0f, 63.0f) * 255.0f / 63.0f));
+	}
 	relit_pixels     = 0;
 	unlit_frame.clear();
 	if (checks && apply) {
@@ -5057,10 +5496,18 @@ void Shaded_light::finish_paint(Image_window8& win, bool full) {
 							  && plan_relight(
 									  apply && view == Shaded_view::normal && !weather_set_on && !checks, gw->get_width(),
 									  gw->get_height());
+			colour_target = colour_pass ? &colour_info : nullptr;
+			tint_target   = colour_pass ? buffers.light_tint.data() : nullptr;
+			colour_amb_q  = std::clamp(
+                    static_cast<int>(std::lround(params.ambient_level * static_cast<float>(std::max(params.level_count - 1, 1)))),
+                    0, std::max(params.level_count - 1, 1));
 			bands = light_pass(
-					clip, buffers.light_levels.data(), true, apply ? frame : nullptr, shadow_set_on ? &shadow_set : nullptr,
+					clip, buffers.light_levels.data(), true, apply && !colour_pass ? frame : nullptr, shadow_set_on ? &shadow_set : nullptr,
 					shadow_set_on ? buffers.shadow_levels.data() : nullptr, weather_set_on ? weather_set.get() : nullptr,
 					weather_set_on ? &wout : nullptr, keep ? fresh_blocks.data() : nullptr);
+			colour_target  = nullptr;
+			tint_target    = nullptr;
+			colour_painted = colour_pass && clip.w > 0 && clip.h > 0;
 			if (timing && keep) {
 				reuse_paints++;
 				reuse_px_clip += static_cast<double>(clip.w) * clip.h;
@@ -5203,6 +5650,150 @@ void Shaded_light::finish_paint(Image_window8& win, bool full) {
 	}
 }
 
+/*
+ *  Colour mode: the overlay shows the light when the option is on, lighting
+ *  is active, the normal view is shown and the window has a renderer
+ *  (EXULT_SHADED_COLOUR=force builds the overlay without one, for dumps).
+ *  A change repaints the whole game area: the frame is lit or unlit.
+ *  Returns true if the mode changed.
+ */
+bool Shaded_light::update_colour_mode() {
+	Game_window* gwin = Game_window::get_instance();
+	Image_window8* win = gwin->get_win();
+	const bool wanted = colour_env == 0 ? false : (colour_env > 0 || colour_option);
+	const bool can    = win && (win->has_renderer() || colour_env == 2);
+	const bool want   = wanted && can && lit_active && static_cast<Shaded_view>(params.view) == Shaded_view::normal
+					  && remap.size() == shaded_remap_size && colour_mul_tab.size() == shaded_remap_size;
+	const int  gw     = gwin->get_width();
+	const int  gh     = gwin->get_height();
+	if (want && (ov_w != gw || ov_h != gh)) {
+		ov_w = gw;
+		ov_h = gh;
+		ov_mul.assign(static_cast<size_t>(gw) * gh, 0xff808080u);
+		ov_add.assign(static_cast<size_t>(gw) * gh, 0xff000000u);
+		ov_world.assign(static_cast<size_t>(gw) * gh, 0);
+		need_full = true;
+	}
+	if (want == colour_mode) {
+		return false;
+	}
+	colour_mode    = want;
+	colour_painted = false;
+	overlay_sent   = false;
+	need_full      = true;
+	if (win) {
+		if (!want) {
+			win->clear_light_overlay();
+		}
+		// Only lit worlds are shown through the overlay.
+		win->set_pre_show(want ? [] { Shaded_light::get().before_show(); } : std::function<void()>());
+		if (screen_every > 0) {
+			win->set_post_show([] { Shaded_light::get().after_show(); });
+		}
+	}
+	gwin->set_all_dirty();
+	return true;
+}
+/*
+ *  At the end of a paint with overlay texels: their rows go to the window
+ *  at the next show.
+ */
+void Shaded_light::finish_overlay(Image_window8& win) {
+	ignore_unused_variable_warning(win);
+	if (!colour_painted) {
+		return;
+	}
+	colour_painted = false;
+	ov_send_y0     = std::min(ov_send_y0, std::max(clip.y, 0));
+	ov_send_y1     = std::max(ov_send_y1, std::min(clip.y + clip.h, ov_h));
+}
+/*
+ *  Just before the window shows the frame: the overlay lights the pixels
+ *  that hold the unlit world it was made for.  Whatever was drawn over the
+ *  world since (text, a dragged shape, the map, the crystal ball), in a
+ *  paint or outside one, differs from it and stays as it is.  Gumps draw
+ *  into their own layers, composited above the overlay.  (Comparing with a
+ *  copy of the world is XCAST3D's idea from Quest of the Companions.)
+ */
+void Shaded_light::before_show() {
+	if (!colour_mode || ov_mul.empty()) {
+		return;
+	}
+	const Clock::time_point show_start = timing ? Clock::now() : Clock::time_point();
+	Game_window*   gwin = Game_window::get_instance();
+	Image_window8* win  = gwin->get_win();
+	if (!win || !setup_buffers(*win) || ov_w != gwin->get_width() || ov_h != gwin->get_height()) {
+		return;
+	}
+	const auto* frame = static_cast<const unsigned char*>(win->get_draw_surface()->pixels);
+	int         y0 = ov_send_y0, y1 = ov_send_y1;
+	for (int y = 0; y < ov_h; y++) {
+		const unsigned char* row = frame + buffers.index(0, y);
+		uint8_t*             was = ov_world.data() + static_cast<size_t>(y) * ov_w;
+		if (std::memcmp(row, was, static_cast<size_t>(ov_w)) == 0) {
+			continue;
+		}
+		bool changed = false;
+		for (int x = 0; x < ov_w; x++) {
+			const size_t at = static_cast<size_t>(y) * ov_w + x;
+			if (row[x] != was[x] && (ov_mul[at] != 0xff808080u || ov_add[at] != 0xff000000u)) {
+				ov_mul[at] = 0xff808080u;
+				ov_add[at] = 0xff000000u;
+				changed    = true;
+			}
+		}
+		if (changed) {
+			y0 = std::min(y0, y);
+			y1 = std::max(y1, y + 1);
+		}
+	}
+	if (colour_resend) {
+		y0 = 0;
+		y1 = ov_h;
+	}
+	colour_resend = false;
+	ov_send_y0    = ov_h;
+	ov_send_y1    = 0;
+	if (y1 > y0 || !overlay_sent) {
+		overlay_sent = win->set_light_overlay(
+				ov_mul.data(), ov_add.data(), 0, 0, ov_w, ov_h, overlay_sent ? y0 : 0, overlay_sent ? y1 : ov_h);
+	}
+	if (timing) {
+		overlay_shows++;
+		overlay_show_us += std::chrono::duration<double, std::micro>(Clock::now() - show_start).count();
+	}
+}
+/*
+ *  EXULT_SHADED_SCREEN_EVERY: after a show, now and then, the frame the
+ *  renderer presented, even while no game paint runs (a modal map).
+ */
+void Shaded_light::after_show() {
+	Image_window8* win = Game_window::get_instance()->get_win();
+	if (screen_every <= 0 || dump_dir.empty() || !win) {
+		return;
+	}
+	const Clock::time_point now = Clock::now();
+	if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_screen).count() < screen_every) {
+		return;
+	}
+	last_screen = now;
+	std::vector<unsigned char> rgb;
+	int                        w = 0, h = 0;
+	if (win->read_screen(rgb, w, h)) {
+		const std::string name = dump_dir + "/screen-" + std::to_string(screens_taken++) + ".png";
+		if (!Shaded_write_png(name, w, h, false, rgb)) {
+			std::cout << "SHADED: could not write " << name << std::endl;
+		}
+	}
+}
+void Shaded_light::drop_overlay(Image_window8& win) {
+	if (colour_mode) {
+		colour_painted = false;
+		overlay_sent   = false;
+		win.clear_light_overlay();
+		need_full = true;
+	}
+}
 /*
  *  Relight a world paint made outside Game_window::paint (the crystal
  *  ball's display_area, save thumbnails).  Nothing is recorded for it, so
@@ -5477,6 +6068,27 @@ void Shaded_light::build_lut(uint8_t* lut) const {
  *  Write the record (or, with view, the resolved debug frame) as images.
  */
 
+/*
+ *  EXULT_SHADED_DUMP_SCREEN: the renderer's output (as a screenshot reads
+ *  it) of dump number, as shaded-N-screen.png.
+ */
+void Shaded_light::dump_screen(int number) {
+#ifdef HAVE_PNG_H
+	Image_window8* win = Game_window::get_instance()->get_win();
+	std::vector<unsigned char> rgb;
+	int                        w = 0, h = 0;
+	if (!win || !win->read_screen(rgb, w, h)) {
+		std::cout << "SHADED: could not read the screen for dump " << number << std::endl;
+		return;
+	}
+	const std::string name = dump_dir + "/shaded-" + std::to_string(number) + "-screen.png";
+	if (!Shaded_write_png(name, w, h, false, rgb)) {
+		std::cout << "SHADED: could not write " << name << std::endl;
+	}
+#else
+	ignore_unused_variable_warning(number);
+#endif
+}
 void Shaded_light::dump(Image_window8& win, int number, bool view, bool full) {
 	Game_window*  gwin   = Game_window::get_instance();
 	const int     gw     = gwin->get_width();
@@ -5526,7 +6138,31 @@ void Shaded_light::dump(Image_window8& win, int number, bool view, bool full) {
 				  << prefix << "view.png" << std::endl;
 		return;
 	}
-	image("normal", frame_colour);
+	if (screen_dumps && win.has_renderer()) {
+		screen_dump = number;    // Read back once it has been shown.
+	}
+	if (colour_painted && displayed_pal.size() == 768 && ov_w == gw) {
+		// As the renderer draws it: 2 * scene * mul / 255 + add, per colour.
+		std::vector<unsigned char> rgb(static_cast<size_t>(gw) * gh * 3);
+		for (int y = 0; y < gh; y++) {
+			for (int x = 0; x < gw; x++) {
+				const int      pix = frame[buffers.index(x, y)];
+				const size_t   at  = static_cast<size_t>(y) * gw + x;
+				for (int k = 0; k < 3; k++) {
+					const int sh    = 16 - 8 * k;
+					const int scene = displayed_pal[3 * pix + k] * 255 / maxval;
+					const int mulk  = static_cast<int>((ov_mul[at] >> sh) & 0xff);
+					const int addk  = static_cast<int>((ov_add[at] >> sh) & 0xff);
+					rgb[at * 3 + k] = static_cast<unsigned char>(std::min(255, (2 * scene * mulk + 127) / 255 + addk));
+				}
+			}
+		}
+		if (!Shaded_write_png(prefix + "normal.png", gw, gh, false, rgb)) {
+			std::cout << "SHADED: could not write " << prefix << "normal.png" << std::endl;
+		}
+	} else {
+		image("normal", frame_colour);
+	}
 	if (!unlit_frame.empty() && ambient_pal.size() == 768) {
 		// The frame before the pass, through the ambient palette.
 		image("unlit", [&](int idx) {
@@ -5918,6 +6554,43 @@ void Shaded_light::write_lighting_info(std::ostream& info) {
 		falling_far += fell_far ? 1 : 0;
 	}
 	info << "check monotonic " << falling << " (" << falling_far << " by more than 2/63)\n";
+	// The ramp as it is shown: per level, the mean colour (6-bit) the lit
+	// indices take, and how far green sits below the red-blue mean (a
+	// magenta cast shows as a positive figure).
+	info << "remap lut level: mean r g b (green deficit)\n";
+	for (int q = 0; q <= top; q++) {
+		long sum[3] = {0, 0, 0};
+		for (int i = 1; i <= shaded_last_lit_index; i++) {
+			const int c = remap[q * 256 + i];
+			for (int k = 0; k < 3; k++) {
+				sum[k] += day[3 * c + k];
+			}
+		}
+		const double n = shaded_last_lit_index;
+		info << "lut " << q << ": " << sum[0] / n << " " << sum[1] / n << " " << sum[2] / n << " ("
+			 << (sum[0] + sum[2]) / (2.0 * n) - sum[1] / n << ")\n";
+	}
+	if (colour_mul_tab.size() != shaded_remap_size) {
+		return;
+	}
+	// The same for the full-colour ramp (6-bit scale, no palette snap).
+	info << "colour lut level: mean r g b (green deficit)\n";
+	for (int q = 0; q <= top; q++) {
+		double sum[3] = {0, 0, 0};
+		for (int i = 1; i <= shaded_last_lit_index; i++) {
+			const uint32_t m = colour_mul_tab[q * 256 + i];
+			const uint32_t a = colour_add_tab[q * 256 + i];
+			for (int k = 0; k < 3; k++) {
+				const int    sh    = 16 - 8 * k;
+				const double scene = day[3 * i + k] * 255.0 / 63.0;
+				const double out   = std::min(255.0, 2.0 * scene * ((m >> sh) & 0xff) / 255.0 + ((a >> sh) & 0xff));
+				sum[k] += out * 63.0 / 255.0;
+			}
+		}
+		const double n = shaded_last_lit_index;
+		info << "colour lut " << q << ": " << sum[0] / n << " " << sum[1] / n << " " << sum[2] / n << " ("
+			 << (sum[0] + sum[2]) / (2.0 * n) - sum[1] / n << ")\n";
+	}
 }
 
 void Shaded_light::report_timing() const {
@@ -5965,7 +6638,9 @@ void Shaded_light::report_timing() const {
 			  << " key_light=" << key_light << " key_record=" << key_record << " key_scroll=" << key_scroll
 			  << " key_only_light=" << key_only_light << " key_only_scroll=" << key_only_scroll << " key_only_ls=" << key_only_ls
 			  << " verify_paints=" << verify_paints << " verify_bad_paints=" << verify_bad_paints
-			  << " verify_bad_px=" << verify_bad_px << " verify_skipped=" << verify_skipped << " reuse_paints=" << reuse_paints
+			  << " verify_bad_px=" << verify_bad_px << " verify_colour_bad_px=" << verify_colour_bad_px << " verify_skipped=" << verify_skipped << " reuse_paints=" << reuse_paints
 			  << " reuse_avg_px_fresh=" << reuse_px_fresh / static_cast<double>(std::max(reuse_paints, 1LL))
-			  << " reuse_avg_px_clip=" << reuse_px_clip / static_cast<double>(std::max(reuse_paints, 1LL)) << std::endl;
+			  << " reuse_avg_px_clip=" << reuse_px_clip / static_cast<double>(std::max(reuse_paints, 1LL))
+			  << " colour=" << (colour_mode ? 1 : 0) << " overlay_shows=" << overlay_shows
+			  << " overlay_show_avg_us=" << overlay_show_us / static_cast<double>(std::max(overlay_shows, 1LL)) << std::endl;
 }
