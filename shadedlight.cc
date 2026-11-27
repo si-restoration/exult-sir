@@ -4481,10 +4481,15 @@ int Shaded_light::light_pass(
 			Shaded_cpu::apply_light_rows(buffers, r, y0, y1, levels, remap.data(), frame);
 		}
 		if (const Colour_target* ct = colour_target) {
-			Shaded_cpu::colour_rows(
-					buffers, r, y0, y1, levels, ct->frame, colour_mul_tab.data(), colour_add_tab.data(), buffers.light_tint.data(),
+			// The paint's clip can reach past the game area (the scaler's
+			// border pixels): the overlay arrays are ov_w x ov_h, so keep to them.
+			const Shaded_rect cr = Intersect(r, Shaded_rect{0, 0, ov_w, ov_h});
+			if (cr.w > 0 && cr.h > 0 && std::max(y0, cr.y) < std::min(y1, cr.y + cr.h)) {
+				Shaded_cpu::colour_rows(
+					buffers, cr, std::max(y0, cr.y), std::min(y1, cr.y + cr.h), levels, ct->frame, colour_mul_tab.data(), colour_add_tab.data(), buffers.light_tint.data(),
 					colour_amb_q, ref_pals[0].data(), ct->fog && wout ? wout->fog : nullptr, ct->fog_rgb, ov_w, ov_mul.data(),
 					ov_add.data(), ov_world.data());
+			}
 		}
 	};
 	// Bands are taken as the workers come free: more bands than threads
