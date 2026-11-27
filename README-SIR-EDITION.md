@@ -10,9 +10,9 @@ This branch, `sir-edition`, is stock Exult plus the changes below. They are also
 - **Three looks.** Classic (exactly as before), Ultima (parchment and gold) or Modern, for the game menu, Options, the Journey Log, the cheat window and conversations. Options has a search box.
 - **Containers as a list** (optional): a tidy list of what is inside, instead of a pile of sprites.
 - **Key bindings editor** on the Input tab of Options.
-- **Shaded light** (work in progress, optional): light and shadow from torches, lamps and spells. Weather lighting is off by default.
+- **Shaded light** (optional): light and shadow from torches, lamps and spells. Sun shadows follow the time of day, with daylight spilling into rooms through doors and windows, and lamps and fires glow in colour over the scene. The Light and Great Light spells and the Helm of Light give the Avatar a lamp-sized glow. A lamp under a roof no longer lights that roof. Weather lighting (overcast, fog, lightning, lit rain and snow) is off by default.
 - **Troubleshooting** (needs cheats on): find a lost item anywhere you have been, browse NPCs and flags, and check a game for stuck quest states.
-- **Fixes:** weather is saved with your game, play time is recorded in saves, and several crashes are fixed.
+- **Fixes:** weather is saved with your game, play time is recorded in saves, and several crashes are fixed, including one in the coloured light layer when a scaler was in use.
 
 ## Getting started
 
@@ -49,7 +49,7 @@ Not built yet. The Serpent Isle Restored mod works on stock Exult 1.12.1.
 ### In the game
 
 - Press **Esc** for the game menu. The line **Menu style: Classic** cycles to Ultima and Modern; conversations follow the menu style.
-- Lighting, containers as a list and key bindings are in **Options** (Ultima or Modern style).
+- Lighting, containers as a list and key bindings are in **Options** (Ultima or Modern style). The Display tab has the shaded light rows (sun, roof cover, coloured light, weather). The UI tab has **Conversation size** and **Conversation text**.
 
 ### Mods
 
