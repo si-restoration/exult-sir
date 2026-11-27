@@ -121,6 +121,22 @@ config/video/shaded_light/weather/fog_distance|int|6|1..64|now|Shaded light: dis
 config/video/shaded_light/weather/fog_fade|int|3|0..16|now|Shaded light: how many tiles of fog edge fade out.
 config/video/shaded_light/weather/lightning_shadows|bool|yes||now|Shaded light: lightning flashes cast shadows.
 config/video/shaded_light/weather/precipitation|bool|yes||now|Shaded light: rain and snow are lit by the lamps.
+config/video/shaded_light/shadow_cheap|int|8|0..64|now|Shaded light: how many more lights per screen block than shadow_lights take the cheap height walk for shadows. 0 turns the cheap tier off.
+config/video/shaded_light/roof_cover|bool|yes||now|Shaded light: a light under a drawn roof does not light that roof.
+config/video/shaded_light/colour|bool|yes||now|Shaded light: draw the light in full colour over the scene (needs a renderer). No uses the game's palette colours.
+config/video/shaded_light/colour_warmth|int|50|0..100|now|Shaded light: how amber lamp colour is in per cent. 0 keeps the game's own palette colours.
+config/video/shaded_light/colour_pool|int|55|5..95|now|Shaded light: where the candle colours sit between the ambient and the full light, in per cent.
+config/video/shaded_light/weather/cloud_shadows|int|40|0..100|now|Shaded light: share of the sky light a full cloud takes, in per cent.
+config/video/shaded_light/weather/overcast_soften|int|50|0..100|now|Shaded light: how much an overcast sky weakens and softens shadows, in per cent.
+config/video/shaded_light/weather/fog|int|100|0..1000|now|Shaded light: fog density in per cent.
+config/video/shaded_light/weather/fog_scatter|int|100|0..1000|now|Shaded light: how much fog scatters light, in per cent.
+config/video/shaded_light/sun/enabled|bool|yes||now|Shaded light: daylight from the sun, with sunlit ground and rooms, shade and light through openings.
+config/video/shaded_light/sun/shade|int|22|0..100|now|Shaded light: light a full shadow takes from the day's, in per cent.
+config/video/shaded_light/sun/indoor|int|18|0..100|now|Shaded light: light a room with no daylight loses, in per cent.
+config/video/shaded_light/sun/face|int|50|0..100|now|Shaded light: share of the shade a wall turned away from the sun takes, in per cent.
+config/video/shaded_light/sun/beams|int|100|0..100|now|Shaded light: strength of the sun through doors, windows and gaps, in per cent.
+config/video/shaded_light/sun/softness|int|100|0..1000|now|Shaded light: softness of sun shadow edges in per cent of half a tile. 0 gives hard edges.
+config/video/shaded_light/sun/reach|int|5|0..12|now|Shaded light: how many tiles daylight spreads into a room.
 config/video/shaded_light/*|int|100|0..1000|now|Shaded light: a per cent slider of the light pass.
 config/video/shaded_light_grid|bool|no||restart|Build the occlusion grid of walls and roofs even with shadows off (for its debug dumps). Shadows turn it on by themselves.
 # --- Audio -------------------------------------------------------------------
@@ -170,6 +186,7 @@ config/audio/midi/*|string|||restart|A setting of one MIDI device (see the MIDI 
 # --- Gameplay ----------------------------------------------------------------
 config/gameplay/menu_style|enum|classic|classic,ultima,modern|now|Look of the game menu, Options, Journey Log and cheat screens: classic gumps or a themed window (Menu style on the UI page of Options). A mod theme name also works.
 config/gameplay/menu_scale|int|100|50..200|now|Size of the themed menus in percent. 100 grows with the shorter side of the screen, so a wide screen gets the same size as a 16:9 one of the same height.
+config/gameplay/conversation_scale|int|100|50..400|now|Size of the themed conversation panel in percent, on top of its display-based size. The Options page offers 75, 90, 100, 110 and 125. Read when a conversation starts.
 config/gameplay/menu_journey_view|enum|grid|grid,list|now|How the themed Journey Log shows the saves: as cards with screenshots (grid) or as a list.
 config/gameplay/menu_journey_sort|enum|newest|newest,oldest,name,day|now|Order of the saves in the themed Journey Log: newest first, oldest first, by name, or furthest in-game day first.
 config/gameplay/dialogue_style|enum|follow|follow,classic,ultima,modern|now|Look of conversations: follow the menu style, the classic faces and text, or a themed screen. A mod theme name also works.

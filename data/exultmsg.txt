@@ -1601,3 +1601,45 @@
 0xDF6:Using the keys file %1.
 0xDF7:%1 no longer has a key.
 0xDF8:Reset %1 to Exult's own keys.
+0xDF9:Conversation size
+0xDFA:Size of the conversation panel, portraits and text; 100% is the normal size. Applies from the next conversation.
+0xDFB:Conversation text
+0xDFC:Size of the text in conversations. Applies from the next conversation.
+0xDFD:Small
+0xDFE:Large
+0xDFF:Sun:
+0xE00:Daylight from the sun: sunlit ground and rooms, shade, and light through doors and windows.
+0xE01:    Shade:
+0xE02:How much light a full shadow takes from the day's light. Higher is darker.
+0xE03:    Dark rooms:
+0xE04:How much light a room with no daylight loses.
+0xE05:    Walls away from sun:
+0xE06:How much of the shade a wall turned away from the sun takes.
+0xE07:    Sunbeams:
+0xE08:Strength of the sun's light through doors, windows and gaps.
+0xE09:    Sun shadow softness:
+0xE0A:How soft the edges of sun shadows are; 0% gives hard edges.
+0xE0B:    Daylight reach:
+0xE0C:How many tiles daylight spreads into a room.
+0xE0D:Roof cover:
+0xE0E:A light under a roof does not light the roof above it.
+0xE0F:    Extra shadow lights:
+0xE10:How many more lights per screen block get a cheap shadow check. 0 turns it off; more is slower.
+0xE11:Coloured light:
+0xE12:Draw lamp and fire light in colour over the scene. Off uses the game's own palette colours.
+0xE13:    Light warmth:
+0xE14:How amber lamp light is. 0% keeps the game's own palette colours.
+0xE15:Weather light:
+0xE16:Overcast sky, cloud shadows, fog, lightning, and lit rain and snow.
+0xE17:    Cloud shadows:
+0xE18:How much of the sky's light a full cloud takes.
+0xE19:    Overcast softening:
+0xE1A:How much an overcast sky weakens and softens shadows.
+0xE1B:    Fog density:
+0xE1C:How thick fog looks.
+0xE1D:    Fog glow:
+0xE1E:How much fog scatters light, so lamps glow in it.
+0xE1F:    Lightning shadows:
+0xE20:Lightning flashes cast shadows.
+0xE21:    Lit rain and snow:
+0xE22:Rain and snow are lit by lamps.

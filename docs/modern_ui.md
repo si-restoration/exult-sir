@@ -267,6 +267,7 @@ The Input tab of the themed Options window (Ultima and Modern styles) ends with 
 |---|---|---|
 | `config/gameplay/menu_style` | `classic`, `ultima`, `modern`, or a theme name | `classic` |
 | `config/gameplay/menu_scale` | 50–200 (percent; the UI page offers 75, 90, 100, 110, 125, 150) | `100` |
+| `config/gameplay/conversation_scale` | 50–400 (percent; the UI page offers 75, 90, 100, 110, 125) | `100` |
 | `config/gameplay/menu_journey_view` | `grid`, `list` | `grid` |
 | `config/gameplay/menu_journey_sort` | `newest`, `oldest`, `name`, `day` | `newest` |
 | `config/gameplay/dialogue_style` | `follow`, `classic`, `ultima`, `modern`, or a theme name | `follow` |

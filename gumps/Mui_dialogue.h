@@ -181,6 +181,7 @@ private:
 	int                        layer_h    = 0;
 	float                      scale      = 1;
 	float                      text_size  = 1;    // Body text size factor.
+	int                        size_percent = 100;    // Conversation size, percent.
 	bool                       shown      = false;
 	bool                       dirty      = true;
 	std::array<Face, 2>        faces;

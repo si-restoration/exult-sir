@@ -240,6 +240,16 @@ std::vector<Mui_options_model::Row> Mui_options_model::build_table(Tab t) {
 			}
 			return config_row(id, label, help, key, Apply::now, std::move(labels), std::move(values), def);
 		};
+		auto count = [&config_row](const char* id, unsigned label, unsigned help, const char* key, int lo, int hi, int step,
+								   const char* def) {
+			std::vector<std::string> labels;
+			std::vector<std::string> values;
+			for (int v = lo; v <= hi; v += step) {
+				labels.push_back(std::to_string(v));
+				values.push_back(std::to_string(v));
+			}
+			return config_row(id, label, help, key, Apply::now, std::move(labels), std::move(values), def);
+		};
 		rows.push_back(on_off("shaded_light", 0xD95, 0xD96, "config/video/shaded_light/enabled", Apply::restart, "no"));
 		rows.push_back(percent("shaded_brightness", 0xD97, 0xD98, "config/video/shaded_light/brightness", 0, 200, 10));
 		rows.push_back(percent("shaded_radius", 0xD99, 0xD9A, "config/video/shaded_light/radius", 50, 200, 10));
@@ -250,7 +260,25 @@ std::vector<Mui_options_model::Row> Mui_options_model::build_table(Tab t) {
 				percent("shaded_shadow_strength", 0xDA1, 0xDA2, "config/video/shaded_light/shadow_strength", 0, 100, 10));
 		rows.push_back(
 				percent("shaded_shadow_softness", 0xDA3, 0xDA4, "config/video/shaded_light/shadow_softness", 0, 200, 10));
+		rows.push_back(count("shaded_shadow_cheap", 0xE0F, 0xE10, "config/video/shaded_light/shadow_cheap", 0, 64, 4, "8"));
 		rows.push_back(percent("shaded_night_tint", 0xDA5, 0xDA6, "config/video/shaded_light/night_tint", 0, 100, 10, "0"));
+		rows.push_back(on_off("shaded_colour", 0xE11, 0xE12, "config/video/shaded_light/colour", Apply::now, "yes"));
+		rows.push_back(percent("shaded_colour_warmth", 0xE13, 0xE14, "config/video/shaded_light/colour_warmth", 0, 100, 10, "50"));
+		rows.push_back(on_off("shaded_roof_cover", 0xE0D, 0xE0E, "config/video/shaded_light/roof_cover", Apply::now, "yes"));
+		rows.push_back(on_off("shaded_sun", 0xDFF, 0xE00, "config/video/shaded_light/sun/enabled", Apply::now, "yes"));
+		rows.push_back(percent("shaded_sun_shade", 0xE01, 0xE02, "config/video/shaded_light/sun/shade", 0, 100, 2, "22"));
+		rows.push_back(percent("shaded_sun_indoor", 0xE03, 0xE04, "config/video/shaded_light/sun/indoor", 0, 100, 2, "18"));
+		rows.push_back(percent("shaded_sun_face", 0xE05, 0xE06, "config/video/shaded_light/sun/face", 0, 100, 10, "50"));
+		rows.push_back(percent("shaded_sun_beams", 0xE07, 0xE08, "config/video/shaded_light/sun/beams", 0, 100, 10));
+		rows.push_back(percent("shaded_sun_softness", 0xE09, 0xE0A, "config/video/shaded_light/sun/softness", 0, 200, 10));
+		rows.push_back(count("shaded_sun_reach", 0xE0B, 0xE0C, "config/video/shaded_light/sun/reach", 0, 12, 1, "5"));
+		rows.push_back(on_off("shaded_weather", 0xE15, 0xE16, "config/video/shaded_light/weather/enabled", Apply::now, "yes"));
+		rows.push_back(percent("shaded_cloud_shadows", 0xE17, 0xE18, "config/video/shaded_light/weather/cloud_shadows", 0, 100, 10, "40"));
+		rows.push_back(percent("shaded_overcast_soften", 0xE19, 0xE1A, "config/video/shaded_light/weather/overcast_soften", 0, 100, 10, "50"));
+		rows.push_back(percent("shaded_fog", 0xE1B, 0xE1C, "config/video/shaded_light/weather/fog", 0, 200, 10));
+		rows.push_back(percent("shaded_fog_scatter", 0xE1D, 0xE1E, "config/video/shaded_light/weather/fog_scatter", 0, 200, 10));
+		rows.push_back(on_off("shaded_lightning_shadows", 0xE1F, 0xE20, "config/video/shaded_light/weather/lightning_shadows", Apply::now, "yes"));
+		rows.push_back(on_off("shaded_precipitation", 0xE21, 0xE22, "config/video/shaded_light/weather/precipitation", Apply::now, "yes"));
 		break;
 	}
 	case Tab::input: {
@@ -273,6 +301,8 @@ std::vector<Mui_options_model::Row> Mui_options_model::build_table(Tab t) {
 		rows    = {
                 row("menu_style", -1, 0xD22, 0xD23, "config/gameplay/menu_style"),
                 row("menu_scale", -1, 0xD28, 0xD29, "config/gameplay/menu_scale"),
+                row("conversation_scale", -1, 0xDF9, 0xDFA, "config/gameplay/conversation_scale"),
+                row("conversation_text", -1, 0xDFB, 0xDFC, "config/gameplay/dialogue_text_size"),
                 row("size", G::id_size, 0xB00, 0xC76, "config/video/ui/width config/video/ui/height"),
                 row("scale_method", G::id_scale_method, 0xB01, 0xC77, "config/video/ui/scale_method"),
                 row("fill_mode", G::id_fill_mode, 0xB02, 0xC78, "config/video/ui/fill_mode"),
@@ -295,7 +325,9 @@ std::vector<Mui_options_model::Row> Mui_options_model::build_table(Tab t) {
         };
 		rows[0].native_key = rows[0].keys;
 		rows[1].native_key = rows[1].keys;
-		for (size_t i = 8; i < rows.size(); i++) {
+		rows[2].native_key = rows[2].keys;
+		rows[3].native_key = rows[3].keys;
+		for (size_t i = 10; i < rows.size(); i++) {
 			rows[i].indent = true;
 		}
 		break;
@@ -378,6 +410,23 @@ void Mui_options_model::load_native() {
 				r.native_values.push_back(std::to_string(pct));
 				r.choices.push_back(std::to_string(pct) + "%");
 			}
+		} else if (r.id == "conversation_scale") {
+			int stored = 100;
+			config->value(r.native_key, stored, 100);
+			cur                   = std::to_string(stored);
+			std::vector<int> pcts = {75, 90, 100, 110, 125};
+			if (std::find(pcts.cbegin(), pcts.cend(), stored) == pcts.cend()) {
+				pcts.push_back(stored);
+				std::sort(pcts.begin(), pcts.end());
+			}
+			for (const int pct : pcts) {
+				r.native_values.push_back(std::to_string(pct));
+				r.choices.push_back(std::to_string(pct) + "%");
+			}
+		} else if (r.id == "conversation_text") {
+			config->value(r.native_key, cur, "normal");
+			r.native_values = {"small", "normal", "large"};
+			r.choices       = {msg(0xDFD), msg(0x620), msg(0xDFE)};
 		}
 		const auto it = std::find(r.native_values.cbegin(), r.native_values.cend(), cur);
 		if (it == r.native_values.cend()) {

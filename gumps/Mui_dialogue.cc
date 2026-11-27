@@ -49,13 +49,14 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 namespace {
 	// The conversation screen keeps its own size: display-height based (1 at
-	// 720 px), capped so a 1280x720 reference fits, clamped to 1-4. The menus'
-	// Mui_theme::ui_scale() and their Menu size setting do not apply here.
-	float conversation_scale(int display_w, int display_h) {
+	// 720 px), capped so a 1280x720 reference fits, clamped to 1-4, then
+	// times the player's Conversation size (config/gameplay/conversation_scale,
+	// percent), kept within 0.5-4. The menus' Mui_theme::ui_scale() and their
+	// Menu size setting do not apply here.
+	float conversation_scale(int display_w, int display_h, int percent) {
 		const float s = std::min(display_h / 720.f, display_w / 1280.f);
-		return std::clamp(s, 1.f, 4.f);
+		return std::clamp(std::clamp(s, 1.f, 4.f) * float(percent) / 100.f, 0.5f, 4.f);
 	}
-
 	class Strings : public GumpStrings {
 	public:
 		static auto Continue() {
@@ -200,12 +201,14 @@ bool Mui_dialogue::resolve_style(std::string& theme_out) {
  *  Created at the start of a session, so the accessibility settings are
  *  read once per conversation (without creating the keys):
  *  dialogue_text_size small/normal/large scales the body text,
+ *  conversation_scale (percent) scales the whole panel,
  *  dialogue_auto_advance off/slow/normal/fast turns text pages by itself.
  */
 Mui_dialogue::Mui_dialogue(std::shared_ptr<Mui_theme> theme_) : theme(std::move(theme_)) {
 	std::string size;
 	config->value("config/gameplay/dialogue_text_size", size, "normal");
 	text_size = size == "small" ? 0.85f : size == "large" ? 1.3f : 1.0f;
+	config->value("config/gameplay/conversation_scale", size_percent, 100);
 	std::string advance;
 	config->value("config/gameplay/dialogue_auto_advance", advance, "off");
 	advance_ms = advance == "slow" ? 60 : advance == "normal" ? 40 : advance == "fast" ? 25 : 0;
@@ -262,7 +265,7 @@ bool Mui_dialogue::ensure_layers() {
 		}
 		w->layer_set_index_argb(face_layer, boosted);
 	}
-	scale = conversation_scale(dw, dh);
+	scale = conversation_scale(dw, dh, size_percent);
 	shown = false;
 	dirty = true;
 	return true;
@@ -402,7 +405,9 @@ void Mui_dialogue::layout(Mui_painter& p) {
 	if (ans_h > 0) {
 		L.answers = TileRect(L.inner.x, L.inner.y + content + L.gap, L.inner.w, ans_h);
 	}
-	const int icon_w = small_h;
+	// The arrow is drawn footer_h * 4 / 5 wide. Above scale 1 that exceeds the
+	// small line height and cut "Continue" short; at 1 the layout is kept as it was.
+	const int icon_w = scale > 1.0f ? std::max(small_h, footer_h * 4 / 5) : small_h;
 	const int cue_w  = icon_w + L.gap / 2 + p.text_width(Strings::Continue(), Mui_font_role::small);
 	L.cue            = TileRect(L.footer.x + L.footer.w - cue_w, L.footer.y, cue_w, footer_h);
 	lay              = L;

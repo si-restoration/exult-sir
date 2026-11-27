@@ -2878,7 +2878,13 @@ void Shaded_light::read_sliders() {
 }
 
 void Shaded_light::reload_sliders() {
+	const int  old_cover  = params.roof_cover;
+	const bool old_colour = colour_option;
+	const float old_warm  = colour_warmth;
 	read_sliders();
+	if (old_cover != params.roof_cover || old_colour != colour_option || old_warm != colour_warmth) {
+		need_full = true;    // These are not in slider_values(): paint everything again.
+	}
 	if (!lighting_on) {
 		return;
 	}
