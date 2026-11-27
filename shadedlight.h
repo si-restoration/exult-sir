@@ -169,7 +169,9 @@ struct alignas(16) Shaded_light_params {
 	float   shadow_strength   = 1.0f;     // 0 = no shadows, 1 = full.
 	float   shadow_softness   = 1.0f;     // 1 = light size 0.5 tile, 0 = hard edges.
 	float   shadow_bias       = 0.25f;    // Tiles skipped at the receiver.
-	float   shadow_reserved   = 0.0f;
+	// Lights beyond the shadow_lights strongest at a map cell that take the
+	// cheap height walk (0 = they keep 1, as before the cheap tier).
+	int32_t shadow_cheap      = 8;
 	// Rounded volumes.  rounded = 0 gives every object its box, exactly as
 	// before they were added; roof_seams only applies while rounded is on.
 	int32_t rounded          = 1;
@@ -264,10 +266,14 @@ constexpr uint8_t shaded_object_rounded = 1;    // Has a rounded volume.
 constexpr uint8_t shaded_object_roof    = 2;    // A slab: occludes, a grid roof shape, or one lift high.
 
 // Light flags (Shaded_light_record::flags).  Area and off are also the
-// flags column of shaded_light.txt.
+// flags column of shaded_light.txt, and so is a glow, as shaded_row_glow.
 constexpr int32_t shaded_light_area    = 1;    // Even light, horizontal distance.
 constexpr int32_t shaded_light_off     = 2;    // Gives no shaded light.
 constexpr int32_t shaded_light_carried = 4;    // Readied by a party member.
+// A glow: a round pool that no shadow blocks (magic items, moongates).
+constexpr int32_t shaded_light_glow    = 32;
+// The glow flag in the flags column of shaded_light.txt.
+constexpr int32_t shaded_row_glow = 4;
 // Under a roof that is drawn (set per paint from the grid, never in the
 // table): the light does not light that roof's own pixels.
 constexpr int32_t shaded_light_covered = 16;
@@ -339,7 +345,7 @@ struct Shaded_light_entry {
 	int brightness;    // Percent; 100 = a torch.
 	int red, green, blue;    // 0-255.
 	int height;        // Lifts above the base; -1 = top of the 3D box.
-	int flags;         // shaded_light_area, shaded_light_off.
+	int flags;         // shaded_light_area, shaded_light_off, shaded_row_glow.
 };
 
 /*
@@ -362,8 +368,7 @@ constexpr Shaded_light_entry Shaded_default_light(int b) {
 constexpr int shaded_light_inherit = std::numeric_limits<int>::min();
 // The row for a light of light_data brightness b: row's fields, with the
 // blank ones from the formula, clamped as the reader clamps them.
-constexpr Shaded_light_entry Shaded_resolve_light(const Shaded_light_entry& row, int b) {
-	const Shaded_light_entry def = Shaded_default_light(b);
+constexpr Shaded_light_entry Shaded_resolve_light(const Shaded_light_entry& row, const Shaded_light_entry& def) {
 	auto pick = [](int v, int d) {
 		return v == shaded_light_inherit ? d : v;
 	};
@@ -372,6 +377,16 @@ constexpr Shaded_light_entry Shaded_resolve_light(const Shaded_light_entry& row,
 							  pick(row.flags, def.flags)};
 }
 
+constexpr Shaded_light_entry Shaded_resolve_light(const Shaded_light_entry& row, int b) {
+	return Shaded_resolve_light(row, Shaded_default_light(b));
+}
+/*
+ *  The row a glow gets for its blank fields: a cool pool of a few tiles at
+ *  the object's top, with no light_data brightness behind it.
+ */
+constexpr Shaded_light_entry Shaded_default_glow() {
+	return Shaded_light_entry{5, 90, 150, 190, 255, -1, shaded_row_glow};
+}
 // Where a light's row came from.
 enum class Shaded_light_row : uint8_t {
 	exact,       // Table row for the shape and frame.
@@ -978,13 +993,15 @@ namespace Shaded_cpu {
 			const Shaded_light_box& box, const Shaded_shadow_field& field, int y0, int y1, uint8_t* data);
 	// Cell rows [y0, y1) of the screen maps being built, over the cells
 	// rectangle: per cell the lights are ranked by unshadowed light and the
-	// top params.shadow_lights traced in screen space (others keep 1).
-	// With ray_grid, every light's map also gets the grid's transmittance.
-	// Adds the number of screen traces to traces.
+	// top params.shadow_lights traced in screen space; the next
+	// params.shadow_cheap take the cheap height walk (the rest keep 1).
+	// Glows are left out.  With ray_grid, every light's map also gets the
+	// grid's transmittance.  Adds the number of screen traces to traces and
+	// of cheap walks to cheap.
 	void screen_shadow_rows(
 			const Shaded_scene_buffers& buf, const Shaded_light_params& params, const Shaded_light_record* lights,
 			const uint32_t* bin_offsets, const uint16_t* bin_lights, const Shaded_grid_volume* ray_grid,
-			Shaded_shadow_set& set, const Shaded_rect& cells, int y0, int y1, long& traces);
+			Shaded_shadow_set& set, const Shaded_rect& cells, int y0, int y1, long& traces, long& cheap);
 	// Cell rows [y0, y1) of the lightning flash's screen map (set.maps[0],
 	// over the cells rectangle): the transmittance from each recorded
 	// receiver along the flash's direction (flash.x, y, z, as a
@@ -1253,6 +1270,11 @@ private:
 	std::string                                       table_game;    // Game and mod it was read for.
 	bool                                              table_loaded = false;
 	int                                               table_radius = 0;    // Largest radius, tiles.
+	// The glows section: objects that glow without being light sources in
+	// the game (shape_info.txt's light_data), keyed as light_table is; and
+	// the shapes it names, for a cheap look at each object.
+	std::map<std::pair<int, int>, Shaded_light_entry> glow_table;
+	std::vector<uint8_t>                              glow_shapes;
 	// The magic section: Light, Great Light.
 	std::array<Shaded_light_entry, shaded_magic_kinds> magic_table{Shaded_default_magic(0), Shaded_default_magic(1)};
 	// The volumes section, keyed by (shape, frame or -1): Shaded_volume.
@@ -1347,7 +1369,7 @@ private:
 	std::vector<std::vector<uint8_t>>  ref_pals;    // shaded_ref_palettes, 768 each.
 	std::string                        refs_game;    // Game the refs were read for.
 	uint64_t                           lit_hash    = 0;    // Light hash of the last lit paint.
-	std::array<float, 37>              lit_sliders{};    // Sliders of the last lit paint.
+	std::array<float, 38>              lit_sliders{};    // Sliders of the last lit paint.
 	int                                lit_grid    = -1;    // Grid generation of the last lit paint.
 	std::vector<unsigned char>         unlit_frame;    // Frame before the pass, for dumps.
 	long                               relit_pixels = 0;
@@ -1363,6 +1385,7 @@ private:
 		int    maps_reused   = 0;
 		long   cells         = 0;    // Of all maps.
 		long   traces        = 0;    // Screen traces run.
+		long   cheap         = 0;    // Cheap height walks run.
 		int    maps_partial  = 0;    // Built from an older version.
 		long   cells_kept    = 0;    // Of those, cells not traced again.
 		int    fields_built  = 0;
@@ -1379,7 +1402,7 @@ private:
 	// full paints.
 	struct Shadow_timers {
 		double    sync = 0, hash = 0, key = 0, copy = 0, field = 0, screen = 0, total = 0;
-		long long maps_built = 0, maps = 0, traces = 0, partial = 0, kept = 0;
+		long long maps_built = 0, maps = 0, traces = 0, cheap = 0, partial = 0, kept = 0;
 		void      add(const Shadow_stats& st, double us) {
 			sync += st.sync_us;
 			hash += st.hash_us;
@@ -1391,6 +1414,7 @@ private:
 			maps_built += st.maps - st.maps_reused;
 			maps += st.maps;
 			traces += st.traces;
+			cheap += st.cheap;
 			partial += st.maps_partial;
 			kept += st.cells_kept;
 		}
@@ -1597,12 +1621,14 @@ private:
 	Shaded_volume      volume_for(const Game_object& obj) const;
 	const Shaded_silhouette& silhouette_for(Shape_frame& shape, int xoff, int yoff, int skip_from);
 	Shaded_light_entry find_row(int shape, int frame, int brightness, Shaded_light_row& row) const;
+	// The glow row of an object that is not a light source, if it has one.
+	bool find_glow(int shape, int frame, Shaded_light_entry& entry, Shaded_light_row& row) const;
 	void               gather_lights();
 	void               add_light(
 						  const Game_object& source, const Game_object& owner, const Shaded_light_entry& entry,
 						  Shaded_light_row row, bool carried);
 	void               shift(int dx, int dy);
-	std::array<float, 37> slider_values() const;
+	std::array<float, 38> slider_values() const;
 	bool               load_weather_refs();
 	bool               prepare_weather();
 	void               prepare_weather_pass();

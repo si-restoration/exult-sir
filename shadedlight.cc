@@ -404,10 +404,12 @@ namespace {
 	 *  A field left blank, or left out at the end of the row, is kept as
 	 *  shaded_light_inherit: the light's own light_data brightness gives it
 	 *  (Shaded_default_light).  Patch rows replace static rows with the
-	 *  same shape and frame.
+	 *  same shape and frame.  The glows section has the same rows; its blank
+	 *  fields come from Shaded_default_glow and every row is a glow.
 	 */
 	class Shaded_light_reader final : public Base_reader {
 		Light_table& table;
+		bool         glows;    // The glows section: every row is a glow.
 	protected:
 		void read_data(std::istream& in, size_t index, int version, bool patch, Exult_Game game, bool binary) override {
 			ignore_unused_variable_warning(index, version, patch, game, binary);
@@ -450,12 +452,15 @@ namespace {
 			entry.height     = field(5);
 			entry.flags      = field(6);
 			if (entry.flags != shaded_light_inherit) {
-				entry.flags &= shaded_light_area | shaded_light_off;
+				entry.flags &= shaded_light_area | shaded_light_off | shaded_row_glow;
+			}
+			if (glows) {
+				entry.flags = entry.flags == shaded_light_inherit ? shaded_row_glow : (entry.flags | shaded_row_glow);
 			}
 			table[std::make_pair(shape, frame)] = entry;
 		}
 	public:
-		explicit Shaded_light_reader(Light_table& t) : Base_reader(false), table(t) {}
+		explicit Shaded_light_reader(Light_table& t, bool glow_rows = false) : Base_reader(false), table(t), glows(glow_rows) {}
 	};
 	using Volume_table = std::map<std::pair<int, int>, uint8_t>;
 
@@ -1410,6 +1415,99 @@ namespace {
 		}
 		return ts;
 	}
+
+	// What a height walk leaves standing: a surface this many lifts above
+	// the ray does not block it (grass, reeds, rubble).
+	constexpr float shaded_cheap_clutter = 2.0f;
+	// Most samples of a height walk, and the screen pixels between them.
+	constexpr int   shaded_cheap_samples = 16;
+	constexpr float shaded_cheap_step    = 3.0f;
+
+	/*
+	 *  The cheap tier of the screen-space trace, for the lights past the
+	 *  strongest few at a cell: a walk over the recorded heights, at most
+	 *  shaded_cheap_samples samples from p to target.  A sample is blocked
+	 *  where the surface over it (not the receiver's or the light's own) is
+	 *  more than shaded_cheap_clutter lifts above the ray, by that object's
+	 *  opacity; the light let through falls with the share of samples held
+	 *  up (none at half of them), which keeps a thin post from cutting the
+	 *  light off.  A receiver at or above the light is not shadowed.  The
+	 *  rules (sample count, step, clutter margin, receivers above the lamp)
+	 *  are after the lamp walk of XCAST3D's Quest of the Companions; this is
+	 *  written for our record and has none of its code.  It reads the frame
+	 *  along the same line from the receiver to the light as
+	 *  Screen_transmittance does, so the same changes of the record make it
+	 *  stale.  Boxes only, no penumbra: the maps' blur softens the edges.
+	 */
+	float Cheap_transmittance(
+			const Shaded_scene_buffers& buf, const Shaded_light_params& params, const Shaded_shadow_set& set,
+			const Shaded_point& p, const Shaded_point& target, int own, int light_id) {
+		if (p.z >= target.z) {
+			return 1.0f;
+		}
+		const float dx   = target.x - p.x;
+		const float dy   = target.y - p.y;
+		const float dz   = target.z - p.z;    // Lifts.
+		const float dt   = dz * params.tiles_per_lift;
+		const float dist = std::sqrt(dx * dx + dy * dy + dt * dt);
+		const float bias = params.shadow_bias;
+		const float stop = 3.0f * bias;    // Short of the light, as of the receiver.
+		if (dist <= bias + stop) {
+			return 1.0f;
+		}
+		const float sx    = dx * params.pixels_per_tile - dz * params.pixels_per_lift;
+		const float sy    = dy * params.pixels_per_tile - dz * params.pixels_per_lift;
+		const int   steps = std::clamp(static_cast<int>(std::sqrt(sx * sx + sy * sy) / shaded_cheap_step), 2, shaded_cheap_samples);
+		const int   count = static_cast<int>(buf.objects.size());
+		float       blocked = 0.0f;    // Samples held up, by opacity.
+		for (int k = 0; k < steps; k++) {
+			const float t  = (bias + (dist - bias - stop) * (static_cast<float>(k) + 0.5f) / static_cast<float>(steps)) / dist;
+			const float qx = p.x + dx * t;
+			const float qy = p.y + dy * t;
+			const float qz = p.z + dz * t;
+			// The height of the surface above (qx, qy): the pixel that q is
+			// seen at shows the nearest surface, which may stand in front of
+			// the ray, so look again where the surface it found would be
+			// seen, until the two agree (3 looks at most).
+			float h  = qz;
+			int   id = shaded_id_none;
+			bool  seen = true;
+			for (int look = 0; look < 3 && seen; look++) {
+				const int px = static_cast<int>(std::floor(
+						Shaded_project(qx, h, params.scroll_tx, params.scroll_px, params.pixels_per_tile, params.pixels_per_lift) + 0.5f));
+				const int py = static_cast<int>(std::floor(
+						Shaded_project(qy, h, params.scroll_ty, params.scroll_py, params.pixels_per_tile, params.pixels_per_lift) + 0.5f));
+				if (px < 0 || py < 0 || px >= set.area_w || py >= set.area_h) {
+					seen = false;    // Off screen: the grid covers the rest.
+					break;
+				}
+				const int at = buf.index(px, py);
+				id           = buf.object_ids[at];
+				if ((buf.facing_map[at] & shaded_face_mask) == shaded_face_none) {
+					id = shaded_id_none;
+					break;
+				}
+				const float next = static_cast<float>(buf.height_map[at]) / params.height_units_per_lift;
+				const bool  same = std::abs(next - h) <= 0.5f;
+				h                = next;
+				if (same) {
+					break;
+				}
+			}
+			if (!seen) {
+				break;
+			}
+			if (id == shaded_id_none || id == shaded_id_overflow || id == own || id == light_id || id > count) {
+				continue;
+			}
+			const uint8_t opacity = buf.object_opacity[id - 1];
+			if (opacity == 0 || h <= qz + shaded_cheap_clutter) {
+				continue;
+			}
+			blocked += static_cast<float>(opacity) / 255.0f;
+		}
+		return std::max(1.0f - 2.0f * blocked / static_cast<float>(steps), 0.0f);
+	}
 }    // namespace
 
 float Shaded_cpu::grid_transmittance(
@@ -1469,7 +1567,7 @@ void Shaded_cpu::grid_field_rows(
 void Shaded_cpu::screen_shadow_rows(
 		const Shaded_scene_buffers& buf, const Shaded_light_params& params, const Shaded_light_record* lights,
 		const uint32_t* bin_offsets, const uint16_t* bin_lights, const Shaded_grid_volume* ray_grid, Shaded_shadow_set& set,
-		const Shaded_rect& cells, int y0, int y1, long& traces) {
+		const Shaded_rect& cells, int y0, int y1, long& traces, long& cheap) {
 	if (params.bins_x <= 0 || params.bins_y <= 0) {
 		return;
 	}
@@ -1482,6 +1580,7 @@ void Shaded_cpu::screen_shadow_rows(
 
 	Candidate  cand[shaded_max_lights];
 	const int  top_k = std::clamp(params.shadow_lights, 1, 16);
+	const int  cheap_k = std::clamp(params.shadow_cheap, 0, shaded_max_lights);
 	for (int cy = y0; cy < y1; cy++) {
 		for (int cx = cells.x; cx < cells.x + cells.w; cx++) {
 			const int     idx  = Cell_pixel(buf, set, cx, cy);
@@ -1503,8 +1602,8 @@ void Shaded_cpu::screen_shadow_rows(
 				const Shaded_rect& lc = set.light_cells[li];
 				const Shaded_light_record& l = lights[li];
 				if (cx < lc.x || cy < lc.y || cx >= lc.x + lc.w || cy >= lc.y + lc.h
-					|| (own != shaded_id_none && l.object_id == own)) {
-					continue;    // Self-light is never shadowed.
+					|| (own != shaded_id_none && l.object_id == own) || (l.flags & shaded_light_glow)) {
+					continue;    // Self-light is never shadowed, nor a glow.
 				}
 				const float c = Unshadowed(params, l, p, n);
 				if (c <= 0.0f) {
@@ -1524,7 +1623,7 @@ void Shaded_cpu::screen_shadow_rows(
 				best          = std::max(best, c);
 			}
 			// The strongest lights get the screen-space trace.
-			for (int round = 0; set.screen && round < top_k; round++) {
+			for (int round = 0; set.screen && round < top_k + cheap_k; round++) {
 				int pick = -1;
 				for (int i = 0; i < count; i++) {
 					if (!cand[i].taken && (pick < 0 || cand[i].light > cand[pick].light)) {
@@ -1540,8 +1639,13 @@ void Shaded_cpu::screen_shadow_rows(
 				}
 				const Shaded_shadow_map& map = set.maps[cand[pick].map];
 				const Shaded_light_record& l = lights[map.light];
-				cand[pick].value *= Screen_transmittance(buf, params, set, p, Shaded_shadow_target(l, p), own, l.object_id);
-				traces++;
+				if (round < top_k) {
+					cand[pick].value *= Screen_transmittance(buf, params, set, p, Shaded_shadow_target(l, p), own, l.object_id);
+					traces++;
+				} else {
+					cand[pick].value *= Cheap_transmittance(buf, params, set, p, Shaded_shadow_target(l, p), own, l.object_id);
+					cheap++;
+				}
 			}
 			for (int i = 0; i < count; i++) {
 				if (cand[i].map < 0) {
@@ -2524,6 +2628,9 @@ Shaded_light::Shaded_light()
 	if (const char* sl = std::getenv("EXULT_SHADED_SHADOW_LIGHTS"); sl && *sl) {
 		params.shadow_lights = std::clamp(std::atoi(sl), 1, 16);
 	}
+	if (const char* ch = std::getenv("EXULT_SHADED_SHADOW_CHEAP"); ch && *ch) {
+		params.shadow_cheap = std::clamp(std::atoi(ch), 0, 64);
+	}
 	if (const char* cache = std::getenv("EXULT_SHADED_SHADOW_CACHE"); cache && *cache) {
 		shadow_cache = *cache != '0';
 	}
@@ -2706,6 +2813,9 @@ void Shaded_light::read_sliders() {
 	int shadow_lights;
 	config->value(base + "shadow_lights", shadow_lights, 4);
 	params.shadow_lights = std::clamp(shadow_lights, 1, 16);
+	int shadow_cheap;
+	config->value(base + "shadow_cheap", shadow_cheap, 8);
+	params.shadow_cheap = std::clamp(shadow_cheap, 0, 64);
 	int resolution;
 	config->value(base + "shadow_resolution", resolution, 2);
 	params.shadow_resolution = Shadow_resolution(resolution);
@@ -2823,6 +2933,8 @@ void Shaded_light::load_table() {
 	table_game   = key;
 	silhouettes.clear();    // Shape frames may be other ones now.
 	light_table.clear();
+	glow_table.clear();
+	glow_shapes.clear();
 	volume_table.clear();
 	for (int kind = 0; kind < shaded_magic_kinds; kind++) {
 		magic_table[kind] = Shaded_default_magic(kind);    // As without a magic section.
@@ -2833,10 +2945,10 @@ void Shaded_light::load_table() {
 	} else if (game == SERPENT_ISLE) {
 		resource = EXULT_SI_FLX_SHADED_LIGHT_TXT;
 	}
-	std::array<std::string_view, 3> sections{"lights", "volumes", "magic"};
+	std::array<std::string_view, 4> sections{"lights", "volumes", "magic", "glows"};
 	std::array                      readers = make_unique_array<Base_reader>(
             std::make_unique<Shaded_light_reader>(light_table), std::make_unique<Shaded_volume_reader>(volume_table),
-            std::make_unique<Shaded_magic_reader>(magic_table));
+            std::make_unique<Shaded_magic_reader>(magic_table), std::make_unique<Shaded_light_reader>(glow_table, true));
 	static_assert(sections.size() == readers.size());
 	try {
 		Read_text_data_file("shaded_light", readers, sections, false, game, resource);
@@ -2850,7 +2962,15 @@ void Shaded_light::load_table() {
 	for (const Shaded_light_entry& entry : magic_table) {
 		table_radius = std::max(table_radius, entry.radius);
 	}
+	for (const auto& [id, entry] : glow_table) {
+		table_radius = std::max(table_radius, entry.radius == shaded_light_inherit ? Shaded_default_glow().radius : entry.radius);
+		if (id.first >= 0) {
+			glow_shapes.resize(std::max(glow_shapes.size(), static_cast<size_t>(id.first) + 1), 0);
+			glow_shapes[static_cast<size_t>(id.first)] = 1;
+		}
+	}
 	std::cout << "SHADED: light table has " << light_table.size() << " rows" << std::endl;
+	std::cout << "SHADED: glow rows " << glow_table.size() << std::endl;
 	if (const char* audit = std::getenv("EXULT_SHADED_TABLE_AUDIT"); audit && *audit) {
 		// Each row as the game resolves it for the light_data brightness of
 		// its shape and frame, and the formula for that brightness.
@@ -2928,6 +3048,26 @@ Shaded_light_entry Shaded_light::find_row(int shape, int frame, int brightness, 
 }
 
 /*
+ *  The glow row of an object that is not a light source: exact (shape,
+ *  frame & 31), then (shape, -1); blank fields from Shaded_default_glow.
+ */
+bool Shaded_light::find_glow(int shape, int frame, Shaded_light_entry& entry, Shaded_light_row& row) const {
+	if (shape < 0 || static_cast<size_t>(shape) >= glow_shapes.size() || !glow_shapes[static_cast<size_t>(shape)]) {
+		return false;
+	}
+	auto it = glow_table.find(std::make_pair(shape, frame & 31));
+	row     = Shaded_light_row::exact;
+	if (it == glow_table.end()) {
+		it  = glow_table.find(std::make_pair(shape, -1));
+		row = Shaded_light_row::wildcard;
+	}
+	if (it == glow_table.end()) {
+		return false;
+	}
+	entry = Shaded_resolve_light(it->second, Shaded_default_glow());
+	return true;
+}
+/*
  *  Add a light from source (the light object) placed on owner (the same
  *  object, or the party member carrying it).
  */
@@ -2971,7 +3111,8 @@ void Shaded_light::add_light(
 	rec.green     = static_cast<float>(entry.green) / 255.0f;
 	rec.blue      = static_cast<float>(entry.blue) / 255.0f;
 	rec.intensity = static_cast<float>(entry.brightness) / 100.0f;
-	rec.flags     = (entry.flags & (shaded_light_area | shaded_light_off)) | (carried ? shaded_light_carried : 0);
+	rec.flags     = (entry.flags & (shaded_light_area | shaded_light_off)) | ((entry.flags & shaded_row_glow) ? shaded_light_glow : 0)
+				| (carried ? shaded_light_carried : 0);
 	rec.object_id = shaded_id_none;    // Resolved once the paint has recorded it.
 	rec.shape     = source.get_shapenum();
 	rec.frame     = source.get_framenum();
@@ -3053,6 +3194,38 @@ void Shaded_light::gather_lights() {
 				const Shaded_light_entry entry = find_row(obj->get_shapenum(), obj->get_framenum(), 0, row);
 				if (row != Shaded_light_row::formula && !(entry.flags & shaded_light_off)) {
 					add_light(*obj, *obj, entry, row, false);
+				}
+			}
+		}
+	}
+	// Glows: objects with a row in the glows section that the game does not
+	// count as light sources (those are in the lists above, and keep their
+	// lights row).  Found by shape, in the chunks as the lists were.
+	if (!glow_shapes.empty()) {
+		for (int j = 0; j < count_y; j++) {
+			for (int i = 0; i < count_x; i++) {
+				Map_chunk* chunk = map->get_chunk_unsafe(wrap(start_x + i), wrap(start_y + j));
+				if (!chunk) {
+					continue;
+				}
+				const bool dungeons = chunk->has_dungeon();
+				Object_iterator next(chunk->get_objects());
+				while (Game_object* obj = next.get_next()) {
+					const int shape = obj->get_shapenum();
+					if (shape < 0 || static_cast<size_t>(shape) >= glow_shapes.size() || !glow_shapes[static_cast<size_t>(shape)]
+						|| obj->get_lift() >= skip_lift) {
+						continue;
+					}
+					const int frame = obj->get_framenum();
+					if (obj->get_info().get_object_light(frame) > 0
+						|| (dungeons && chunk->is_dungeon(obj->get_tx(), obj->get_ty()) != 0) != dungeon) {
+						continue;
+					}
+					Shaded_light_entry entry;
+					Shaded_light_row   row;
+					if (find_glow(shape, frame, entry, row) && !(entry.flags & shaded_light_off)) {
+						add_light(*obj, *obj, entry, row, false);
+					}
 				}
 			}
 		}
@@ -3172,7 +3345,7 @@ void Shaded_light::gather_lights() {
  *  The sliders a lit frame depends on, stage 3's first, then the weather's.
  */
 
-std::array<float, 37> Shaded_light::slider_values() const {
+std::array<float, 38> Shaded_light::slider_values() const {
 	return {params.ambient,
 			params.brightness,
 			params.radius_scale,
@@ -3181,6 +3354,7 @@ std::array<float, 37> Shaded_light::slider_values() const {
 			params.shadow_strength,
 			params.shadow_softness,
 			static_cast<float>(params.shadow_lights),
+			static_cast<float>(params.shadow_cheap),
 			static_cast<float>(params.shadow_resolution),
 			static_cast<float>(params.rounded),
 			static_cast<float>(params.roof_seams),
@@ -3246,7 +3420,7 @@ bool Shaded_light::prepare_paint() {
 	const bool weather_changed = prepare_weather();
 	// The lighting of a partial paint must match the frame around it, so
 	// any change of what it depends on paints the whole game area.
-	const std::array<float, 37> sliders = slider_values();
+	const std::array<float, 38> sliders = slider_values();
 	const bool lights_changed = lit_active && (light_hash != lit_hash || sliders != lit_sliders || weather_changed);
 	// A change of the occlusion grid (a door opened) relights more than
 	// its own rectangle.
@@ -4807,6 +4981,9 @@ bool Shaded_light::shadow_pass(
 			continue;
 		}
 		stats.lights++;
+		if (l.flags & shaded_light_glow) {
+			continue;    // A glow casts no shadows: no map, no field.
+		}
 		if (use_fields && !(l.flags & shaded_light_directional)) {
 			// The cells within reach of the light, clipped to the grid.
 			const float lx  = Shaded_wrap_delta(l.x - static_cast<float>(vol->origin_tx));
@@ -4908,7 +5085,7 @@ bool Shaded_light::shadow_pass(
 			}
 			key = base;
 			key.insert(key.end(), {static_cast<int64_t>(light_hash), static_cast<int64_t>(hash), params.scroll_tx, params.scroll_ty,
-								   params.scroll_px, params.scroll_py, res, params.shadow_lights, params.shadow_steps,
+								   params.scroll_px, params.scroll_py, res, params.shadow_lights, params.shadow_cheap, params.shadow_steps,
 								   q16(params.shadow_softness * 256.0f), q16(params.shadow_bias * 256.0f),
 								   q16(params.facing_min * 256.0f), q16(params.area_height), set.screen, set.ray_grid,
 								   ray ? generation : 0, ray ? vol->origin_tx : 0, ray ? vol->origin_ty : 0, params.rounded,
@@ -4979,14 +5156,18 @@ bool Shaded_light::shadow_pass(
 	if (cx1 > cx0) {
 		const Shaded_rect cells{cx0, cy0, cx1 - cx0, cy1 - cy0};
 		std::vector<long> traces(static_cast<size_t>(bands), 0);
+		std::vector<long> cheaps(static_cast<size_t>(bands), 0);
 		run_bands(bands, [&](int b) {
 			Shaded_cpu::screen_shadow_rows(
 					buffers, params, lights.data(), buffers.bin_offsets.data(), buffers.bin_lights.data(),
 					ray ? vol : nullptr, set, cells, cells.y + cells.h * b / bands, cells.y + cells.h * (b + 1) / bands,
-					traces[static_cast<size_t>(b)]);
+					traces[static_cast<size_t>(b)], cheaps[static_cast<size_t>(b)]);
 		});
 		for (const long n : traces) {
 			stats.traces += n;
+		}
+		for (const long n : cheaps) {
+			stats.cheap += n;
 		}
 	}
 	// The values before the blur, for the next version of the map.
@@ -5102,7 +5283,7 @@ void Shaded_light::check_shadows(const Shaded_rect& r) {
 	const char*        parts = shadow_parts == shaded_shadow_parts_screen ? "screen"
 							   : (shadow_parts == shaded_shadow_parts_grid ? "grid" : "both");
 	out << "shadows " << (shadow_set_on ? "on" : "off") << " res " << params.shadow_resolution << " lights "
-		<< params.shadow_lights << " strength " << params.shadow_strength << " softness " << params.shadow_softness
+		<< params.shadow_lights << " cheap " << params.shadow_cheap << " strength " << params.shadow_strength << " softness " << params.shadow_softness
 		<< " parts " << parts << " grid " << (shadow_grid_ray ? "ray" : "field") << " cache "
 		<< (shadow_cache ? "on" : "off") << "\n";
 	if (!shadow_set_on) {
@@ -5112,7 +5293,7 @@ void Shaded_light::check_shadows(const Shaded_rect& r) {
 	const Shadow_stats& st = shadow_stats;
 	out << "shadow lights traced " << st.lights << " maps " << st.maps << " cells " << st.cells << " fields built "
 		<< st.fields_built << " reused " << st.fields_reused << "\n"
-		<< "shadow maps reused " << st.maps_reused << " screen traces " << st.traces << " field_us " << st.field_us
+		<< "shadow maps reused " << st.maps_reused << " screen traces " << st.traces << " cheap walks " << st.cheap << " field_us " << st.field_us
 		<< " screen_us " << st.screen_us << "\n";
 	auto same_in = [&](const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
 		for (int y = r.y; y < r.y + r.h; y++) {
@@ -6619,7 +6800,7 @@ void Shaded_light::report_timing() const {
 				  << " " << tag << "_screen=" << t.screen / n << " " << tag << "_other="
 				  << (t.total - t.sync - t.hash - t.key - t.copy - t.field - t.screen) / n << " " << tag
 				  << "_maps=" << static_cast<double>(t.maps) / n << " " << tag << "_built=" << static_cast<double>(t.maps_built) / n
-				  << " " << tag << "_traces=" << static_cast<double>(t.traces) / n << " " << tag
+				  << " " << tag << "_traces=" << static_cast<double>(t.traces) / n << " " << tag << "_cheap=" << static_cast<double>(t.cheap) / n << " " << tag
 				  << "_partial=" << static_cast<double>(t.partial) / n << " " << tag << "_kept=" << static_cast<double>(t.kept) / n;
 	};
 	std::cout << "SHADED-PARTS: full_shadow_passes=" << full_shadow_passes << " full_light_passes=" << full_light_passes;

@@ -4,7 +4,9 @@
 #	(config/video/shaded_light/enabled) is on.  Rows only apply to objects
 #	the engine already treats as lights, that is shapes with a light_data
 #	row in shape_info.txt (or the light flag); a mod makes a new light
-#	source there, as before, and tunes it here.
+#	source there, as before, and tunes it here.  Things that glow without
+#	being light sources (magic items) have rows in the glows section at the
+#	end, and need no light_data row.
 #
 #	A mod overrides rows with its own <PATCH>/shaded_light.txt, which only
 #	needs the rows it changes (same shape and frame replace a row here).
@@ -23,7 +25,8 @@
 #	flags		Sum of: 1 = area light (even light over its radius,
 #				horizontal distance only, lighting surfaces from its
 #				lift to 6 lifts above), 2 = off (the shape gives no
-#				shaded light).
+#				shaded light), 4 = glow (no shadow blocks it; see the
+#				glows section).
 #
 #	Every light starts from the formula, where b is the shape's
 #	light_data brightness for that frame (candle 1, torch 5, lamp 7):
@@ -97,11 +100,11 @@
 :668/4
 #	Baking hearth.
 :831/-1
-#	Moongates.
-:157/-1
-:776/-1
-:777/-1
-:779/-1
+#	Moongates: 157 is the red one, 776 the blue.
+:157/-1/7/150/255/100/90/3/4
+:776/-1/7/150/150/195/255/3/4
+:777/-1/7/150/150/195/255/3/4
+:779/-1/7/150/150/195/255/3/4
 #	FoV mirror.
 :848/3
 :848/4
@@ -202,4 +205,39 @@
 #	Cactus.
 :669/-1/3
 :817/-1/3
+%%endsection
+%%section glows
+#	Glows: things that glow without being light sources in the game.  The
+#	game does not count them as lights (no light_data row in shape_info.txt,
+#	so its own lighting is unchanged); the shaded light renderer gives each
+#	a round pool that no shadow blocks, cool by default.  Rows are the same
+#	as in the lights section, and a blank field takes the glow's default:
+#		radius 5, brightness 90, colour 150/190/255, height -1, flags 4.
+#	Every row here is a glow (flags always include 4).  The rows are by
+#	shape, not by name.  An object that is a light source in the game keeps
+#	its row in the lights section (flags 4 there makes it a glow too, as the
+#	moongates are).  Height is in lifts above the object's base; a low glow
+#	on the floor would only graze it, so these sit a few lifts up.
+#	Glows follow the lamp rules: by day, in the open, they give no light.
+#
+#	Format
+#		:shape/frame/radius/brightness/red/green/blue/height/flags
+#
+#	Orb of the Moons.
+:785/-1/5/125/150/195/255/4
+#	Crystal ball.
+:729/-1/4/105/150/195/255/4
+#	The Orrery Crystal.
+:746/-1/4/105/150/195/255/4
+#	The Vortex Cube.
+:786/-1/4/105/150/195/255/4
+#	Energy field.
+:768/-1/4/115/150/195/255/2
+#	Glimmer.
+:566/-1/3/85/190/215/255/2
+#	Rudyom's Wand, the Magician's Wand, the lightning wand and the fire wand.
+:771/-1/3/95/150/195/255/3
+:792/-1/3/95/150/195/255/3
+:629/-1/3/95/190/215/255/3
+:630/-1/3/95/255/170/110/3
 %%endsection
